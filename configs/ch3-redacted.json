@@ -1,0 +1,38 @@
+{
+  "channel_id": "CH3",
+  "channel_name": "REDACTED",
+  "niche": "Declassified operations / Government cover-ups",
+  "audience": "Skeptics 22-50, investigative minds",
+  "length_minutes_min": 12,
+  "length_minutes_max": 18,
+  "word_count": 1800,
+  "brand_color": "#ff3333",
+  "background_color": "#0d0d0d",
+  "posting_schedule": {
+    "days": ["Monday", "Thursday"],
+    "time_utc": "18:00"
+  },
+  "narrator_mode": true,
+  "tts_voice": "en-US-GuyNeural",
+  "speech_rate": "-8%",
+  "pitch": "-2Hz",
+  "visual_style": {
+    "aesthetic": "Declassified doc aesthetic, film grain 14-18%, redaction bars, typewriter font",
+    "film_grain_min": 14,
+    "film_grain_max": 18,
+    "font_primary": "Barlow Condensed Black",
+    "font_secondary": "Courier",
+    "thumbnail_style": "Blood red highlights, redaction bars, government file aesthetic",
+    "intro": "Classified stamp animation",
+    "outro": "Redacted closing screen"
+  },
+  "content_strategy": {
+    "script_structure": "hook → historical context → declassified evidence → analysis → implications → CTA",
+    "hook_style": "Shocking declassified fact with primary source citation"
+  },
+  "forbidden_words": [],
+  "forbidden_topics": ["election fraud", "anti-vax", "QAnon", "flat earth", "anything without primary sources"],
+  "reference_channels": ["Adam Curtis", "Frontline", "Errol Morris"],
+  "music_style": "Dark, cinematic, tense documentary score",
+  "b_roll_intensity": 70
+}

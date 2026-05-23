@@ -1,0 +1,104 @@
+name: Nightly Pipeline — Topic & Script Generation
+
+on:
+  schedule:
+    # Run at 20:00 UTC every night (content for next day)
+    - cron: "0 20 * * *"
+  workflow_dispatch:
+    inputs:
+      channels:
+        description: "Comma-separated channel IDs to run (e.g. ch1,ch3) or 'all'"
+        required: false
+        default: "all"
+
+env:
+  PYTHONPATH: ${{ github.workspace }}
+
+jobs:
+  generate-topics:
+    name: Generate Topics for All Channels
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Install Python dependencies
+        run: pip install -r requirements.txt
+
+      - name: Generate topics
+        run: python scripts/generate_topics.py
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          CLOUDINARY_CLOUD_NAME: ${{ secrets.CLOUDINARY_CLOUD_NAME }}
+          CLOUDINARY_API_KEY: ${{ secrets.CLOUDINARY_API_KEY }}
+          CLOUDINARY_API_SECRET: ${{ secrets.CLOUDINARY_API_SECRET }}
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+
+      - name: Notify topic generation complete
+        if: success()
+        run: |
+          python - <<'PYEOF'
+          from scripts.telegram_notify import send_message
+          from datetime import date
+          send_message(f"*Nightly Pipeline* — Topics generated for {date.today().isoformat()}")
+          PYEOF
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+        continue-on-error: true
+
+  generate-scripts:
+    name: Generate 7-Stage Scripts
+    runs-on: ubuntu-latest
+    needs: generate-topics
+    timeout-minutes: 60
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Install Python dependencies
+        run: pip install -r requirements.txt
+
+      - name: Generate full production manifests
+        run: python scripts/write_scripts.py
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          CLOUDINARY_CLOUD_NAME: ${{ secrets.CLOUDINARY_CLOUD_NAME }}
+          CLOUDINARY_API_KEY: ${{ secrets.CLOUDINARY_API_KEY }}
+          CLOUDINARY_API_SECRET: ${{ secrets.CLOUDINARY_API_SECRET }}
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+
+      - name: Notify script generation complete
+        if: always()
+        run: |
+          STATUS="${{ job.status }}"
+          python - <<PYEOF
+          from scripts.telegram_notify import send_message
+          from datetime import date
+          status = "${STATUS}"
+          icon = "✅" if status == "success" else "❌"
+          send_message(f"{icon} *Nightly Pipeline* — Script generation {status} for {date.today().isoformat()}")
+          PYEOF
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+        continue-on-error: true

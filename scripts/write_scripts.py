@@ -1,0 +1,543 @@
+"""
+7-Stage script generation pipeline.
+
+Downloads today's topics from Cloudinary, generates full production manifests
+for each channel, and uploads them back to Cloudinary.
+
+Stages:
+  1. outline       – structured JSON outline
+  2. research      – facts and supporting evidence
+  3. full_script   – complete narration text
+  4. line_breakdown – timed lines with durations
+  5. visual_treatments – Remotion composition per line
+  6. b_roll_keywords – Pexels search terms per line
+  7. metadata      – YouTube title, description, tags
+"""
+
+import json
+import logging
+import os
+import re
+from datetime import date
+from typing import Any, Dict, List
+
+import cloudinary
+import cloudinary.uploader
+import requests
+from dotenv import load_dotenv
+
+from ai_client import get_client
+
+load_dotenv()
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
+)
+logger = logging.getLogger(__name__)
+
+CONFIGS_DIR = os.path.join(os.path.dirname(os.path.dirname(__file__)), "configs")
+
+CHANNEL_CONFIG_FILES = {
+    "ch1": "ch1-dopamine-loop.json",
+    "ch2": "ch2-financefiction.json",
+    "ch3": "ch3-redacted.json",
+    "ch4": "ch4-grey-matter.json",
+    "ch5": "ch5-quiet-record.json",
+}
+
+TREATMENT_OPTIONS = [
+    "TextReveal",
+    "SplitScreen",
+    "Fullscreen",
+    "CelebrityCard",
+    "StatsBanner",
+    "Quote",
+    "Timeline",
+    "BulletList",
+    "ImageReveal",
+    "DataViz",
+    "DocumentScan",
+    "ArchiveFootage",
+    "BrainDiagram",
+]
+
+
+def _init_cloudinary():
+    cloudinary.config(
+        cloud_name=os.environ["CLOUDINARY_CLOUD_NAME"],
+        api_key=os.environ["CLOUDINARY_API_KEY"],
+        api_secret=os.environ["CLOUDINARY_API_SECRET"],
+        secure=True,
+    )
+
+
+def load_channel_config(channel_id: str) -> Dict[str, Any]:
+    filename = CHANNEL_CONFIG_FILES[channel_id]
+    path = os.path.join(CONFIGS_DIR, filename)
+    with open(path, "r", encoding="utf-8") as fh:
+        config = json.load(fh)
+    config["_channel_id"] = channel_id
+    return config
+
+
+def _clean_json(raw: str) -> str:
+    """Strip markdown fences and leading/trailing whitespace from LLM output."""
+    raw = raw.strip()
+    if raw.startswith("```"):
+        parts = raw.split("```")
+        if len(parts) >= 3:
+            raw = parts[1]
+        else:
+            raw = parts[-1]
+        if raw.startswith("json"):
+            raw = raw[4:]
+    return raw.strip()
+
+
+# ---------------------------------------------------------------------------
+# Stage 1 – Outline
+# ---------------------------------------------------------------------------
+
+def stage_1_outline(topic: Dict[str, Any], channel_config: Dict[str, Any]) -> Dict[str, Any]:
+    """Generate a structured JSON outline for the video."""
+    client = get_client()
+    name = channel_config["channel_name"]
+    niche = channel_config["niche"]
+    length_min = channel_config.get("length_minutes_min", 8)
+    length_max = channel_config.get("length_minutes_max", 12)
+    word_count = channel_config.get("word_count", 1200)
+
+    system = (
+        f"You are the head writer for YouTube channel '{name}' (niche: {niche}). "
+        "You create factual, well-researched video outlines."
+    )
+    prompt = f"""Create a detailed video outline for this topic:
+
+Title: {topic['title']}
+Hook: {topic['hook']}
+Angle: {topic['angle']}
+
+Channel: {name} | Niche: {niche}
+Target length: {length_min}–{length_max} minutes (~{word_count} words)
+
+Return ONLY a valid JSON object:
+{{
+  "title": "final title",
+  "hook_statement": "opening line",
+  "sections": [
+    {{
+      "section_number": 1,
+      "heading": "section heading",
+      "key_points": ["point 1", "point 2", "point 3"],
+      "estimated_words": 200
+    }}
+  ],
+  "conclusion": "closing message",
+  "call_to_action": "subscribe / like / comment prompt"
+}}
+
+Aim for 5–8 sections. Return ONLY the JSON, no extra text."""
+
+    raw = client.generate(prompt=prompt, system_prompt=system, max_tokens=2000, temperature=0.7)
+    return json.loads(_clean_json(raw))
+
+
+# ---------------------------------------------------------------------------
+# Stage 2 – Research
+# ---------------------------------------------------------------------------
+
+def stage_2_research(outline: Dict[str, Any], channel_config: Dict[str, Any]) -> Dict[str, Any]:
+    """Expand the outline with factual supporting evidence and statistics."""
+    client = get_client()
+    name = channel_config["channel_name"]
+    forbidden = channel_config.get("forbidden_topics", [])
+
+    system = (
+        f"You are a research specialist for '{name}'. "
+        "You find verifiable facts, statistics, and historical context to support video scripts. "
+        "Never fabricate statistics or sources."
+    )
+    forbidden_str = ", ".join(forbidden) if forbidden else "none"
+    outline_str = json.dumps(outline, indent=2)
+
+    prompt = f"""Enrich this video outline with supporting research:
+
+{outline_str}
+
+Requirements:
+- Add 2–4 verifiable facts or statistics per section
+- Include source type (e.g. peer-reviewed study, government report, court document)
+- FORBIDDEN topics: {forbidden_str}
+- Do not fabricate data — use plausible real-world research directions
+
+Return ONLY a valid JSON object — the same structure as the input outline but with an added
+"research_notes" list in each section containing objects like:
+{{"fact": "...", "source_type": "...", "year": "..."}}
+
+Return ONLY the JSON, no extra text."""
+
+    raw = client.generate(prompt=prompt, system_prompt=system, max_tokens=3000, temperature=0.5)
+    return json.loads(_clean_json(raw))
+
+
+# ---------------------------------------------------------------------------
+# Stage 3 – Full Script
+# ---------------------------------------------------------------------------
+
+def stage_3_full_script(research: Dict[str, Any], channel_config: Dict[str, Any]) -> str:
+    """Write the complete narration script."""
+    client = get_client()
+    name = channel_config["channel_name"]
+    niche = channel_config["niche"]
+    word_count = channel_config.get("word_count", 1200)
+    forbidden_words = channel_config.get("forbidden_words", [])
+    forbidden_topics = channel_config.get("forbidden_topics", [])
+    narrator_mode = channel_config.get("narrator_mode", True)
+    style = channel_config.get("style", {})
+    style_notes = style.get("description", "") if isinstance(style, dict) else str(style)
+
+    system = (
+        f"You are the lead scriptwriter for '{name}' (niche: {niche}). "
+        "You write compelling, factual narration scripts optimised for YouTube retention."
+    )
+    forbidden_words_str = ", ".join(forbidden_words) if forbidden_words else "none"
+    forbidden_topics_str = ", ".join(forbidden_topics) if forbidden_topics else "none"
+    research_str = json.dumps(research, indent=2)
+    narrator_instruction = (
+        "Write full narration text for every section."
+        if narrator_mode
+        else "Write scene directions and on-screen text only — NO spoken narration (channel uses audio clips)."
+    )
+
+    prompt = f"""Write a complete video script based on this research outline:
+
+{research_str}
+
+Channel style: {style_notes}
+Target word count: ~{word_count} words
+FORBIDDEN words (never use): {forbidden_words_str}
+FORBIDDEN topics (never reference): {forbidden_topics_str}
+Narrator instruction: {narrator_instruction}
+
+Requirements:
+- Open with the hook statement immediately
+- Use short paragraphs (2–4 sentences max)
+- Include [PAUSE] markers for dramatic effect
+- Include [B-ROLL: description] markers for visual notes
+- End with a compelling conclusion and CTA
+- Write in second person ("you") for engagement
+
+Return ONLY the plain script text. No JSON, no section headers — just the script."""
+
+    script = client.generate(prompt=prompt, system_prompt=system, max_tokens=4096, temperature=0.75)
+    return script.strip()
+
+
+# ---------------------------------------------------------------------------
+# Stage 4 – Line Breakdown
+# ---------------------------------------------------------------------------
+
+def stage_4_line_breakdown(script: str, channel_config: Dict[str, Any]) -> List[Dict[str, Any]]:
+    """Split the script into individual timed lines."""
+    client = get_client()
+    name = channel_config["channel_name"]
+    narrator_mode = channel_config.get("narrator_mode", True)
+
+    system = f"You are the timing director for '{name}'. You break scripts into precise timed segments."
+
+    prompt = f"""Break this script into timed lines for video production:
+
+{script}
+
+Rules:
+- Each line should be 8–20 words (one breath / thought unit)
+- Assign a duration in seconds (estimate 130 words/min speaking pace)
+- Mark each line as: narration | b_roll_note | pause | title_card
+- narrator_mode: {"on" if narrator_mode else "off (no spoken narration, visual/audio only)"}
+
+Return ONLY a valid JSON array where each element is:
+{{
+  "line_number": 1,
+  "text": "the line text",
+  "type": "narration | b_roll_note | pause | title_card",
+  "duration_seconds": 4.5,
+  "cumulative_seconds": 4.5
+}}
+
+Return ONLY the JSON array, no extra text."""
+
+    raw = client.generate(prompt=prompt, system_prompt=system, max_tokens=4096, temperature=0.3)
+    return json.loads(_clean_json(raw))
+
+
+# ---------------------------------------------------------------------------
+# Stage 5 – Visual Treatments
+# ---------------------------------------------------------------------------
+
+def stage_5_visual_treatments(
+    lines: List[Dict[str, Any]], channel_config: Dict[str, Any]
+) -> List[Dict[str, Any]]:
+    """Assign a Remotion composition treatment to each line."""
+    client = get_client()
+    name = channel_config["channel_name"]
+    brand_color = channel_config.get("brand_color", "#ffffff")
+    bg_color = channel_config.get("background_color", "#000000")
+    font_primary = channel_config.get("font_primary", "Inter")
+    font_secondary = channel_config.get("font_secondary", "Inter")
+
+    available = ", ".join(TREATMENT_OPTIONS)
+    lines_json = json.dumps(lines, indent=2)
+
+    system = f"You are the motion graphics director for '{name}'. You select visual treatments for each script line."
+
+    prompt = f"""Assign a visual treatment composition to each line:
+
+Lines:
+{lines_json}
+
+Available compositions: {available}
+Channel brand color: {brand_color} on {bg_color}
+Fonts: {font_primary} (primary), {font_secondary} (secondary)
+
+Selection guide:
+- TextReveal: narration lines with single key message
+- SplitScreen: comparison or contrast moments
+- Fullscreen: dramatic reveals, hooks, conclusions
+- CelebrityCard: person introductions or quotes
+- StatsBanner: statistics and numbers
+- Quote: direct quotes from subjects
+- Timeline: chronological events
+- BulletList: lists of points
+- ImageReveal: visual reveals
+- DataViz: charts and data
+- DocumentScan: document/evidence reveals
+- ArchiveFootage: historical context
+- BrainDiagram: psychological/scientific concepts
+
+Add to each line object:
+  "treatment": "<CompositionName>",
+  "brand_color": "{brand_color}",
+  "background_color": "{bg_color}",
+  "font_primary": "{font_primary}",
+  "font_secondary": "{font_secondary}"
+
+Return ONLY the updated JSON array with the new fields added. No extra text."""
+
+    raw = client.generate(prompt=prompt, system_prompt=system, max_tokens=4096, temperature=0.4)
+    return json.loads(_clean_json(raw))
+
+
+# ---------------------------------------------------------------------------
+# Stage 6 – B-Roll Keywords
+# ---------------------------------------------------------------------------
+
+def stage_6_b_roll_keywords(
+    lines: List[Dict[str, Any]], channel_config: Dict[str, Any]
+) -> List[Dict[str, Any]]:
+    """Generate Pexels search keywords for each line."""
+    client = get_client()
+    name = channel_config["channel_name"]
+    b_roll_intensity = channel_config.get("b_roll_intensity", 50)
+
+    lines_json = json.dumps(lines, indent=2)
+
+    system = f"You are the stock footage coordinator for '{name}'. You identify the best search terms for stock video."
+
+    prompt = f"""Generate Pexels stock footage search keywords for each line:
+
+Lines:
+{lines_json}
+
+B-roll intensity: {b_roll_intensity}/100 (higher = more b-roll coverage needed)
+Rules:
+- 2–4 keywords per line, specific and visual
+- For b_roll_note lines: use the note's subject directly
+- For pause/title_card lines: use abstract/atmospheric terms
+- Avoid copyrighted names; use descriptive visual terms
+- Keywords must work as Pexels search queries
+
+Add to each line object:
+  "b_roll_keywords": ["keyword1", "keyword2", "keyword3"]
+
+Return ONLY the updated JSON array. No extra text."""
+
+    raw = client.generate(prompt=prompt, system_prompt=system, max_tokens=4096, temperature=0.4)
+    return json.loads(_clean_json(raw))
+
+
+# ---------------------------------------------------------------------------
+# Stage 7 – Metadata
+# ---------------------------------------------------------------------------
+
+def stage_7_metadata(
+    topic: Dict[str, Any],
+    script: str,
+    channel_config: Dict[str, Any],
+) -> Dict[str, Any]:
+    """Generate YouTube upload metadata."""
+    client = get_client()
+    name = channel_config["channel_name"]
+    niche = channel_config["niche"]
+    audience = channel_config["audience"]
+    forbidden_words = channel_config.get("forbidden_words", [])
+
+    forbidden_str = ", ".join(forbidden_words) if forbidden_words else "none"
+    script_excerpt = script[:1500]
+
+    system = f"You are the SEO and metadata specialist for '{name}'."
+
+    prompt = f"""Create YouTube upload metadata for this video:
+
+Channel: {name} (niche: {niche}, audience: {audience})
+Topic title: {topic['title']}
+Script excerpt (first 1500 chars):
+{script_excerpt}
+
+FORBIDDEN words in title/description: {forbidden_str}
+
+Return ONLY a valid JSON object:
+{{
+  "title": "final optimised YouTube title (max 70 chars)",
+  "description": "full YouTube description (300–500 words, include timestamps at bottom)",
+  "tags": ["tag1", "tag2", ...],
+  "category_id": "22",
+  "default_language": "en",
+  "thumbnail_prompt": "detailed image generation prompt for thumbnail (describe visually)"
+}}
+
+Category IDs: 22=People & Blogs, 25=News & Politics, 27=Education, 28=Science & Technology
+Pick the most appropriate. Return ONLY the JSON, no extra text."""
+
+    raw = client.generate(prompt=prompt, system_prompt=system, max_tokens=2000, temperature=0.6)
+    return json.loads(_clean_json(raw))
+
+
+# ---------------------------------------------------------------------------
+# Orchestrator
+# ---------------------------------------------------------------------------
+
+def generate_complete_manifest(
+    topic: Dict[str, Any], channel_config: Dict[str, Any]
+) -> Dict[str, Any]:
+    """Run all 7 stages and return a complete production manifest."""
+    channel_id = channel_config["_channel_id"]
+    title = topic["title"]
+    logger.info("[%s] Stage 1 – Outline for: %s", channel_id, title)
+    outline = stage_1_outline(topic, channel_config)
+
+    logger.info("[%s] Stage 2 – Research", channel_id)
+    research = stage_2_research(outline, channel_config)
+
+    logger.info("[%s] Stage 3 – Full script", channel_id)
+    script = stage_3_full_script(research, channel_config)
+
+    logger.info("[%s] Stage 4 – Line breakdown", channel_id)
+    lines = stage_4_line_breakdown(script, channel_config)
+
+    logger.info("[%s] Stage 5 – Visual treatments", channel_id)
+    lines = stage_5_visual_treatments(lines, channel_config)
+
+    logger.info("[%s] Stage 6 – B-roll keywords", channel_id)
+    lines = stage_6_b_roll_keywords(lines, channel_config)
+
+    logger.info("[%s] Stage 7 – Metadata", channel_id)
+    metadata = stage_7_metadata(topic, script, channel_config)
+
+    total_duration = sum(line.get("duration_seconds", 0) for line in lines)
+
+    manifest = {
+        "channel_id": channel_id,
+        "channel_name": channel_config["channel_name"],
+        "topic": topic,
+        "outline": outline,
+        "research": research,
+        "script": script,
+        "lines": lines,
+        "metadata": metadata,
+        "channel_config": channel_config,
+        "total_duration_seconds": round(total_duration, 1),
+        "total_lines": len(lines),
+        "pipeline_version": "1.0.0",
+    }
+    logger.info(
+        "[%s] Manifest complete – %d lines, %.0fs total",
+        channel_id,
+        len(lines),
+        total_duration,
+    )
+    return manifest
+
+
+# ---------------------------------------------------------------------------
+# Cloudinary helpers
+# ---------------------------------------------------------------------------
+
+def _download_topics(channel_id: str, date_str: str) -> List[Dict[str, Any]]:
+    """Fetch today's topics JSON from Cloudinary."""
+    cloud_name = os.environ["CLOUDINARY_CLOUD_NAME"]
+    public_id = f"automation/topics/{date_str}/{channel_id}"
+    url = f"https://res.cloudinary.com/{cloud_name}/raw/upload/{public_id}.json"
+    resp = requests.get(url, timeout=30)
+    resp.raise_for_status()
+    data = resp.json()
+    return data["topics"]
+
+
+def _upload_manifest(channel_id: str, manifest: Dict[str, Any], date_str: str) -> str:
+    payload = json.dumps(manifest, indent=2)
+    public_id = f"automation/manifests/{date_str}/{channel_id}"
+    result = cloudinary.uploader.upload(
+        payload.encode("utf-8"),
+        resource_type="raw",
+        public_id=public_id,
+        overwrite=True,
+        tags=["manifest", channel_id, date_str],
+    )
+    url = result["secure_url"]
+    logger.info("Manifest uploaded for %s → %s", channel_id, url)
+    return url
+
+
+# ---------------------------------------------------------------------------
+# Main
+# ---------------------------------------------------------------------------
+
+def main():
+    _init_cloudinary()
+    date_str = date.today().isoformat()
+    results = {}
+
+    for channel_id, config_file in CHANNEL_CONFIG_FILES.items():
+        try:
+            config_path = os.path.join(CONFIGS_DIR, config_file)
+            with open(config_path, "r", encoding="utf-8") as fh:
+                channel_config = json.load(fh)
+            channel_config["_channel_id"] = channel_id
+
+            topics = _download_topics(channel_id, date_str)
+            # Use the first (best) topic
+            topic = topics[0]
+            logger.info("[%s] Using topic: %s", channel_id, topic["title"])
+
+            manifest = generate_complete_manifest(topic, channel_config)
+            url = _upload_manifest(channel_id, manifest, date_str)
+            results[channel_id] = {"status": "ok", "url": url, "title": topic["title"]}
+
+        except Exception as exc:  # pylint: disable=broad-except
+            logger.error("Script generation failed for %s: %s", channel_id, exc, exc_info=True)
+            results[channel_id] = {"status": "error", "error": str(exc)}
+
+    print("\n=== SCRIPT GENERATION SUMMARY ===")
+    for ch_id, data in results.items():
+        if data["status"] == "ok":
+            print(f"[{ch_id}] OK – '{data['title']}' → {data['url']}")
+        else:
+            print(f"[{ch_id}] ERROR: {data['error']}")
+
+    failed = [k for k, v in results.items() if v["status"] == "error"]
+    if failed:
+        raise SystemExit(f"Script generation failed for: {failed}")
+
+
+if __name__ == "__main__":
+    main()

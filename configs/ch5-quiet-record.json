@@ -1,0 +1,38 @@
+{
+  "channel_id": "CH5",
+  "channel_name": "THE QUIET RECORD",
+  "niche": "Forgotten history / Archival recovery",
+  "audience": "Documentary lovers 25-65",
+  "length_minutes_min": 12,
+  "length_minutes_max": 20,
+  "word_count": 2000,
+  "brand_color": "#c8a24b",
+  "background_color": "#1a1008",
+  "posting_schedule": {
+    "days": ["Wednesday", "Saturday"],
+    "time_utc": "18:00"
+  },
+  "narrator_mode": true,
+  "tts_voice": "en-GB-RyanNeural",
+  "speech_rate": "-10%",
+  "pitch": "-1Hz",
+  "visual_style": {
+    "aesthetic": "Vintage archival, film grain 6-8%, aged paper, sepia tones",
+    "film_grain_min": 6,
+    "film_grain_max": 8,
+    "font_primary": "Playfair Display Black",
+    "font_secondary": "Crimson Text",
+    "thumbnail_style": "Aged gold sepia, historical document aesthetic, museum quality",
+    "intro": "Archival footage montage",
+    "outro": "Documentary credits roll"
+  },
+  "content_strategy": {
+    "script_structure": "hook → historical context → archival evidence → narrative → modern relevance → CTA",
+    "hook_style": "Forgotten historical moment that reframes something modern"
+  },
+  "forbidden_words": [],
+  "forbidden_topics": ["nationalist mythmaking", "imperial nostalgia", "romanticising slavery or colonialism", "contested-as-settled history"],
+  "reference_channels": ["BBC Four", "Ken Burns", "David Olusoga"],
+  "music_style": "Orchestral, documentary, reflective",
+  "b_roll_intensity": 80
+}

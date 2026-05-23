@@ -1,0 +1,313 @@
+name: Morning Pipeline — Video Production & Upload
+
+on:
+  schedule:
+    # Run at 04:00 UTC every morning (produce videos for 18:00 UTC publish)
+    - cron: "0 4 * * *"
+  workflow_dispatch:
+    inputs:
+      channel_id:
+        description: "Single channel ID to run (e.g. ch1) or leave empty for all"
+        required: false
+        default: ""
+
+env:
+  PYTHONPATH: ${{ github.workspace }}
+
+jobs:
+  produce-and-upload:
+    name: Produce Videos & Upload to YouTube
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      # ── System dependencies ──────────────────────────────────────────────────
+      - name: Install FFmpeg
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y ffmpeg
+          ffmpeg -version | head -1
+
+      - name: Set up Node.js 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: remotion/package-lock.json
+
+      - name: Install Remotion dependencies
+        run: |
+          cd remotion
+          npm ci --prefer-offline
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Install Python dependencies
+        run: pip install -r requirements.txt
+
+      # ── Notify pipeline start ─────────────────────────────────────────────────
+      - name: Notify pipeline start
+        run: |
+          python - <<'PYEOF'
+          from scripts.telegram_notify import notify_pipeline_start
+          notify_pipeline_start("Morning Production", channel_count=5)
+          PYEOF
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+        continue-on-error: true
+
+      # ── CH1: DOPAMINE LOOP ────────────────────────────────────────────────────
+      - name: "[CH1] Fetch stock footage"
+        run: python -c "
+          import json, sys
+          sys.path.insert(0, 'scripts')
+          from stock_footage import fetch_all_footage
+          import requests, os
+          from datetime import date
+          cloud = os.environ['CLOUDINARY_CLOUD_NAME']
+          url = f'https://res.cloudinary.com/{cloud}/raw/upload/automation/manifests/{date.today().isoformat()}/ch1.json'
+          r = requests.get(url, timeout=30)
+          if r.status_code == 200:
+              fetch_all_footage(r.json())
+          "
+        env:
+          PEXELS_API_KEY: ${{ secrets.PEXELS_API_KEY }}
+          CLOUDINARY_CLOUD_NAME: ${{ secrets.CLOUDINARY_CLOUD_NAME }}
+        continue-on-error: true
+
+      - name: "[CH1] Generate voiceover"
+        run: python -c "
+          import asyncio, json, sys, os, requests
+          sys.path.insert(0, 'scripts')
+          from generate_voiceover import generate_all_voiceovers
+          from datetime import date
+          cloud = os.environ['CLOUDINARY_CLOUD_NAME']
+          url = f'https://res.cloudinary.com/{cloud}/raw/upload/automation/manifests/{date.today().isoformat()}/ch1.json'
+          r = requests.get(url, timeout=30)
+          if r.status_code == 200:
+              asyncio.run(generate_all_voiceovers(r.json()))
+          "
+        env:
+          CLOUDINARY_CLOUD_NAME: ${{ secrets.CLOUDINARY_CLOUD_NAME }}
+        continue-on-error: true
+
+      - name: "[CH1] Generate thumbnail"
+        run: python -c "
+          import json, sys, os, requests
+          sys.path.insert(0, 'scripts')
+          from generate_thumbnail import generate_thumbnail
+          from datetime import date
+          cloud = os.environ['CLOUDINARY_CLOUD_NAME']
+          url = f'https://res.cloudinary.com/{cloud}/raw/upload/automation/manifests/{date.today().isoformat()}/ch1.json'
+          r = requests.get(url, timeout=30)
+          if r.status_code == 200:
+              m = r.json()
+              title = m.get('metadata', {}).get('title', 'Untitled')
+              cfg = m.get('channel_config', {}); cfg['_channel_id'] = 'ch1'
+              generate_thumbnail(title, cfg, 'temp/thumbnails/ch1_thumbnail.png', m.get('metadata', {}).get('thumbnail_prompt'))
+          "
+        env:
+          CLOUDINARY_CLOUD_NAME: ${{ secrets.CLOUDINARY_CLOUD_NAME }}
+        continue-on-error: true
+
+      - name: "[CH1] Render motion graphics"
+        run: python -c "
+          import json, sys, os, requests
+          sys.path.insert(0, 'scripts')
+          from render_mographs import render_all_lines
+          from datetime import date
+          cloud = os.environ['CLOUDINARY_CLOUD_NAME']
+          url = f'https://res.cloudinary.com/{cloud}/raw/upload/automation/manifests/{date.today().isoformat()}/ch1.json'
+          r = requests.get(url, timeout=30)
+          if r.status_code == 200:
+              render_all_lines(r.json())
+          "
+        env:
+          CLOUDINARY_CLOUD_NAME: ${{ secrets.CLOUDINARY_CLOUD_NAME }}
+        continue-on-error: true
+
+      - name: "[CH1] Assemble & upload video"
+        run: python -c "
+          import json, sys, os, requests
+          sys.path.insert(0, 'scripts')
+          from assemble_video import assemble_video
+          from upload_youtube import upload_video
+          from upload_drive import backup_to_drive
+          from telegram_notify import notify_success, notify_error
+          from datetime import date
+          cloud = os.environ['CLOUDINARY_CLOUD_NAME']
+          url = f'https://res.cloudinary.com/{cloud}/raw/upload/automation/manifests/{date.today().isoformat()}/ch1.json'
+          r = requests.get(url, timeout=30)
+          if r.status_code != 200:
+              print('No manifest for ch1'); sys.exit(0)
+          manifest = r.json()
+          output_path = 'temp/final/ch1_final.mp4'
+          ok = assemble_video(manifest, None, [], [], output_path)
+          if ok:
+              vid_id = upload_video(output_path, 'temp/thumbnails/ch1_thumbnail.png', manifest)
+              if vid_id:
+                  backup_to_drive(output_path, 'ch1', date.today().isoformat())
+                  notify_success('ch1', manifest.get('channel_name', 'CH1'), manifest.get('metadata', {}).get('title', ''), vid_id)
+              else:
+                  notify_error('ch1', 'upload', 'upload_video returned None')
+          else:
+              notify_error('ch1', 'assembly', 'assemble_video failed')
+          "
+        env:
+          CLOUDINARY_CLOUD_NAME: ${{ secrets.CLOUDINARY_CLOUD_NAME }}
+          YOUTUBE_CLIENT_ID: ${{ secrets.YOUTUBE_CLIENT_ID }}
+          YOUTUBE_CLIENT_SECRET: ${{ secrets.YOUTUBE_CLIENT_SECRET }}
+          YOUTUBE_REFRESH_TOKEN_CH1: ${{ secrets.YOUTUBE_REFRESH_TOKEN_CH1 }}
+          GOOGLE_DRIVE_CREDENTIALS: ${{ secrets.GOOGLE_DRIVE_CREDENTIALS }}
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+        continue-on-error: true
+
+      # ── Repeat for CH2-CH5 (same pattern) ────────────────────────────────────
+      - name: "[CH2-CH5] Fetch footage, voiceover, thumbnail, render, assemble, upload"
+        run: |
+          python - <<'PYEOF'
+          import asyncio
+          import json
+          import os
+          import sys
+          from datetime import date
+
+          import requests
+
+          sys.path.insert(0, "scripts")
+          from assemble_video import assemble_video
+          from generate_thumbnail import generate_thumbnail
+          from generate_voiceover import generate_all_voiceovers
+          from render_mographs import render_all_lines
+          from stock_footage import fetch_all_footage
+          from telegram_notify import notify_error, notify_success
+          from upload_drive import backup_to_drive
+          from upload_youtube import upload_video
+
+          CHANNEL_IDS = ["ch2", "ch3", "ch4", "ch5"]
+          REFRESH_TOKENS = {
+              "ch2": os.environ.get("YOUTUBE_REFRESH_TOKEN_CH2"),
+              "ch3": os.environ.get("YOUTUBE_REFRESH_TOKEN_CH3"),
+              "ch4": os.environ.get("YOUTUBE_REFRESH_TOKEN_CH4"),
+              "ch5": os.environ.get("YOUTUBE_REFRESH_TOKEN_CH5"),
+          }
+
+          cloud = os.environ["CLOUDINARY_CLOUD_NAME"]
+          today = date.today().isoformat()
+
+          for ch_id in CHANNEL_IDS:
+              print(f"\n=== Processing {ch_id} ===")
+              try:
+                  url = f"https://res.cloudinary.com/{cloud}/raw/upload/automation/manifests/{today}/{ch_id}.json"
+                  r = requests.get(url, timeout=30)
+                  if r.status_code != 200:
+                      print(f"  No manifest for {ch_id} — skipping")
+                      continue
+
+                  manifest = r.json()
+
+                  # Fetch footage
+                  try:
+                      fetch_all_footage(manifest)
+                  except Exception as e:
+                      print(f"  Stock footage warning: {e}")
+
+                  # Generate voiceover
+                  try:
+                      asyncio.run(generate_all_voiceovers(manifest))
+                  except Exception as e:
+                      print(f"  Voiceover warning: {e}")
+
+                  # Generate thumbnail
+                  thumbnail_path = f"temp/thumbnails/{ch_id}_thumbnail.png"
+                  try:
+                      title = manifest.get("metadata", {}).get("title", "Untitled")
+                      cfg = manifest.get("channel_config", {})
+                      cfg["_channel_id"] = ch_id
+                      hint = manifest.get("metadata", {}).get("thumbnail_prompt")
+                      generate_thumbnail(title, cfg, thumbnail_path, hint)
+                  except Exception as e:
+                      print(f"  Thumbnail warning: {e}")
+                      thumbnail_path = None
+
+                  # Render motion graphics
+                  try:
+                      render_all_lines(manifest)
+                  except Exception as e:
+                      print(f"  Render warning: {e}")
+
+                  # Assemble video
+                  output_path = f"temp/final/{ch_id}_final.mp4"
+                  ok = assemble_video(manifest, None, [], [], output_path)
+                  if not ok:
+                      notify_error(ch_id, "assembly", "assemble_video failed")
+                      continue
+
+                  # Upload to YouTube
+                  vid_id = upload_video(output_path, thumbnail_path, manifest)
+                  if vid_id:
+                      backup_to_drive(output_path, ch_id, today)
+                      notify_success(
+                          ch_id,
+                          manifest.get("channel_name", ch_id),
+                          manifest.get("metadata", {}).get("title", ""),
+                          vid_id,
+                      )
+                  else:
+                      notify_error(ch_id, "upload", "upload_video returned None")
+
+              except Exception as exc:
+                  print(f"  ERROR for {ch_id}: {exc}")
+                  notify_error(ch_id, "morning-pipeline", str(exc))
+          PYEOF
+        env:
+          PEXELS_API_KEY: ${{ secrets.PEXELS_API_KEY }}
+          CLOUDINARY_CLOUD_NAME: ${{ secrets.CLOUDINARY_CLOUD_NAME }}
+          CLOUDINARY_API_KEY: ${{ secrets.CLOUDINARY_API_KEY }}
+          CLOUDINARY_API_SECRET: ${{ secrets.CLOUDINARY_API_SECRET }}
+          YOUTUBE_CLIENT_ID: ${{ secrets.YOUTUBE_CLIENT_ID }}
+          YOUTUBE_CLIENT_SECRET: ${{ secrets.YOUTUBE_CLIENT_SECRET }}
+          YOUTUBE_REFRESH_TOKEN_CH2: ${{ secrets.YOUTUBE_REFRESH_TOKEN_CH2 }}
+          YOUTUBE_REFRESH_TOKEN_CH3: ${{ secrets.YOUTUBE_REFRESH_TOKEN_CH3 }}
+          YOUTUBE_REFRESH_TOKEN_CH4: ${{ secrets.YOUTUBE_REFRESH_TOKEN_CH4 }}
+          YOUTUBE_REFRESH_TOKEN_CH5: ${{ secrets.YOUTUBE_REFRESH_TOKEN_CH5 }}
+          GOOGLE_DRIVE_CREDENTIALS: ${{ secrets.GOOGLE_DRIVE_CREDENTIALS }}
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+        continue-on-error: true
+
+      # ── Cleanup ───────────────────────────────────────────────────────────────
+      - name: Cleanup Cloudinary old assets
+        run: python scripts/cleanup_cloudinary.py
+        env:
+          CLOUDINARY_CLOUD_NAME: ${{ secrets.CLOUDINARY_CLOUD_NAME }}
+          CLOUDINARY_API_KEY: ${{ secrets.CLOUDINARY_API_KEY }}
+          CLOUDINARY_API_SECRET: ${{ secrets.CLOUDINARY_API_SECRET }}
+        continue-on-error: true
+
+      # ── Daily summary ─────────────────────────────────────────────────────────
+      - name: Send daily summary
+        if: always()
+        run: |
+          python - <<'PYEOF'
+          from scripts.telegram_notify import send_message
+          from datetime import date
+          status = "COMPLETED"
+          send_message(
+              f"*Morning Pipeline {status}* — {date.today().isoformat()}\n"
+              "Check individual step logs for per-channel status."
+          )
+          PYEOF
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+        continue-on-error: true

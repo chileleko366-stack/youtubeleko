@@ -1,0 +1,38 @@
+{
+  "channel_id": "CH4",
+  "channel_name": "THE GREY MATTER",
+  "niche": "Peer-reviewed science / Neuroscience",
+  "audience": "Educated adults 22-50, science readers",
+  "length_minutes_min": 10,
+  "length_minutes_max": 16,
+  "word_count": 1500,
+  "brand_color": "#7b61ff",
+  "background_color": "#0a0a1a",
+  "posting_schedule": {
+    "days": ["Tuesday", "Friday"],
+    "time_utc": "18:00"
+  },
+  "narrator_mode": true,
+  "tts_voice": "en-GB-LibbyNeural",
+  "speech_rate": "-5%",
+  "pitch": null,
+  "visual_style": {
+    "aesthetic": "Scientific paper aesthetic, film grain 8-10%, paper texture, ink effects",
+    "film_grain_min": 8,
+    "film_grain_max": 10,
+    "font_primary": "DM Serif Display",
+    "font_secondary": "IBM Plex Sans",
+    "thumbnail_style": "Deep purple accents, brain imagery, clean scientific aesthetic",
+    "intro": "Animated neural network",
+    "outro": "Academic journal style credits"
+  },
+  "content_strategy": {
+    "script_structure": "hook → research background → methodology → findings → implications → CTA",
+    "hook_style": "Surprising peer-reviewed research finding"
+  },
+  "forbidden_words": [],
+  "forbidden_topics": ["self-help platitudes", "MBTI-as-science", "evolutionary psych just-so stories", "pseudoscience"],
+  "reference_channels": ["Hidden Brain", "Veritasium", "In Our Time"],
+  "music_style": "Ambient, contemplative, scientific",
+  "b_roll_intensity": 60
+}

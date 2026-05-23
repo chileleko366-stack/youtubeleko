@@ -1,0 +1,38 @@
+{
+  "channel_id": "CH2",
+  "channel_name": "FINANCEFICTION",
+  "niche": "Financial psychology / Wealth stories",
+  "audience": "Adults 18-40, finance-curious",
+  "length_minutes_min": 8,
+  "length_minutes_max": 12,
+  "word_count": 1200,
+  "brand_color": "#00d4aa",
+  "background_color": "#0d1117",
+  "posting_schedule": {
+    "days": ["Tuesday", "Friday", "Saturday"],
+    "time_utc": "18:00"
+  },
+  "narrator_mode": true,
+  "tts_voice": "en-US-GuyNeural",
+  "speech_rate": "+0%",
+  "pitch": null,
+  "visual_style": {
+    "aesthetic": "Clean, modern, minimal film grain",
+    "film_grain_min": 4,
+    "film_grain_max": 6,
+    "font_primary": "Inter Black",
+    "font_secondary": "Söhne",
+    "thumbnail_style": "Teal and white, professional, wealth imagery",
+    "intro": "Clean animated logo",
+    "outro": "Subscribe CTA with channel branding"
+  },
+  "content_strategy": {
+    "script_structure": "hook → financial story → psychological analysis → lesson → CTA",
+    "hook_style": "Surprising wealth fact or counter-intuitive financial insight"
+  },
+  "forbidden_words": [],
+  "forbidden_topics": ["specific investment advice", "get-rich-quick schemes", "crypto gambling"],
+  "reference_channels": ["Andrei Jikh", "Graham Stephan", "Bloomberg"],
+  "music_style": "Clean, modern, subtle background",
+  "b_roll_intensity": 50
+}

@@ -1,0 +1,38 @@
+{
+  "channel_id": "CH1",
+  "channel_name": "DOPAMINE LOOP",
+  "niche": "Psychology / Celebrity / Self-improvement",
+  "audience": "Men 16-35, ambitious and driven",
+  "length_minutes_min": 8,
+  "length_minutes_max": 12,
+  "word_count": 1000,
+  "brand_color": "#e8ff47",
+  "background_color": "#0a0a0a",
+  "posting_schedule": {
+    "days": ["Tuesday", "Friday"],
+    "time_utc": "18:00"
+  },
+  "narrator_mode": false,
+  "tts_voice": null,
+  "speech_rate": null,
+  "pitch": null,
+  "visual_style": {
+    "aesthetic": "VHS glitch, CRT distortion, film grain 18-22%",
+    "film_grain_min": 18,
+    "film_grain_max": 22,
+    "font_primary": "Anton",
+    "font_secondary": "Neue Haas Grotesk",
+    "thumbnail_style": "Bold yellow text on dark bg, celebrity portrait, VHS glitch effects",
+    "intro": "Animated logo with VHS distortion",
+    "outro": "Subscribe reminder with channel branding"
+  },
+  "content_strategy": {
+    "script_structure": "hook → celebrity story → psychological insight → actionable lesson → CTA",
+    "hook_style": "Bold celebrity statement or shocking psychological fact"
+  },
+  "forbidden_words": ["amazing", "journey", "grind", "hustle", "level up", "boss up", "sigma", "alpha"],
+  "forbidden_topics": ["politics", "religion", "dating advice", "fitness content"],
+  "reference_channels": ["Alastair", "Motiversity", "Aperture"],
+  "music_style": "Energetic, motivational, electronic",
+  "b_roll_intensity": 20
+}
