@@ -8,6 +8,7 @@ cloudinary://topics/{date}/{channel_id}.json
 import json
 import logging
 import os
+import time
 from datetime import date
 from typing import Any, Dict, List
 
@@ -36,6 +37,15 @@ CHANNEL_CONFIG_FILES = {
 
 
 def _init_cloudinary():
+    missing = [
+        v for v in ("CLOUDINARY_CLOUD_NAME", "CLOUDINARY_API_KEY", "CLOUDINARY_API_SECRET")
+        if not os.environ.get(v)
+    ]
+    if missing:
+        raise RuntimeError(
+            f"Missing Cloudinary secrets: {missing}. "
+            "Add them to GitHub Secrets: Settings → Secrets → Actions."
+        )
     cloudinary.config(
         cloud_name=os.environ["CLOUDINARY_CLOUD_NAME"],
         api_key=os.environ["CLOUDINARY_API_KEY"],
@@ -108,22 +118,42 @@ Return ONLY a valid JSON array with exactly 3 objects. Each object must have:
 Return ONLY the JSON array, no markdown fences, no extra text."""
 
     client = get_client()
-    raw = client.generate(prompt=prompt, system_prompt=system_prompt, max_tokens=1500, temperature=0.85)
 
-    # Strip markdown fences if LLM added them
-    raw = raw.strip()
-    if raw.startswith("```"):
-        raw = raw.split("```")[1]
-        if raw.startswith("json"):
-            raw = raw[4:]
-    raw = raw.strip()
+    last_err = None
+    for attempt in range(1, 4):
+        if attempt > 1:
+            time.sleep(attempt * 3)
+        try:
+            raw = client.generate(prompt=prompt, system_prompt=system_prompt, max_tokens=1500, temperature=0.85)
 
-    topics = json.loads(raw)
-    if not isinstance(topics, list) or len(topics) != 3:
-        raise ValueError(f"Expected list of 3 topics, got: {type(topics)} len={len(topics) if isinstance(topics, list) else 'N/A'}")
+            # Strip markdown fences if LLM wrapped the output
+            raw = raw.strip()
+            if raw.startswith("```"):
+                raw = raw.split("```", 2)[1]
+                if raw.startswith("json"):
+                    raw = raw[4:]
+            raw = raw.strip()
 
-    logger.info("Generated %d topics for %s (%s)", len(topics), channel_id, name)
-    return topics
+            if not raw:
+                raise ValueError("LLM returned empty content")
+
+            topics = json.loads(raw)
+            if not isinstance(topics, list) or len(topics) == 0:
+                raise ValueError(f"Expected JSON list, got: {type(topics)}")
+
+            # Trim to 3 if model returned more; pad only on last attempt
+            topics = topics[:3]
+            if len(topics) < 3 and attempt == 3:
+                logger.warning("Only %d topics returned for %s — proceeding anyway", len(topics), channel_id)
+
+            logger.info("Generated %d topics for %s (%s) on attempt %d", len(topics), channel_id, name, attempt)
+            return topics
+
+        except (json.JSONDecodeError, ValueError) as exc:
+            last_err = exc
+            logger.warning("Topics parse error for %s (attempt %d/3): %s", channel_id, attempt, exc)
+
+    raise ValueError(f"Failed to get valid topics for {channel_id} after 3 attempts: {last_err}")
 
 
 def upload_topics_to_cloudinary(channel_id: str, topics: List[Dict], date_str: str) -> str:

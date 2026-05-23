@@ -56,7 +56,10 @@ class AIClient:
             max_tokens=max_tokens,
             temperature=temperature,
         )
-        return response.choices[0].message.content
+        content = response.choices[0].message.content
+        if not content or not content.strip():
+            raise ValueError("LLM returned empty response — treating as retryable error")
+        return content
 
     def generate(
         self,
