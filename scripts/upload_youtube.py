@@ -32,6 +32,17 @@ REFRESH_TOKEN_ENV = {
 }
 
 
+def is_youtube_configured(channel_id: str) -> bool:
+    """Return True if all required YouTube env vars are set for this channel."""
+    token_env = REFRESH_TOKEN_ENV.get(channel_id.lower())
+    return bool(
+        os.environ.get("YOUTUBE_CLIENT_ID")
+        and os.environ.get("YOUTUBE_CLIENT_SECRET")
+        and token_env
+        and os.environ.get(token_env)
+    )
+
+
 def _build_youtube_client(channel_id: str):
     """Build authenticated YouTube API client for a specific channel."""
     client_id = os.environ["YOUTUBE_CLIENT_ID"]
@@ -81,6 +92,15 @@ def upload_video(
     tags = metadata.get("tags", [])
     category_id = metadata.get("category_id", "27")
     publish_at = _build_publish_time()
+
+    if not is_youtube_configured(channel_id):
+        logger.warning(
+            "[%s] YouTube credentials not set — skipping upload. "
+            "Set YOUTUBE_CLIENT_ID, YOUTUBE_CLIENT_SECRET, and %s to enable.",
+            channel_id,
+            REFRESH_TOKEN_ENV.get(channel_id.lower(), f"YOUTUBE_REFRESH_TOKEN_{channel_id.upper()}"),
+        )
+        return None
 
     logger.info("[%s] Uploading: %s", channel_id, title)
 

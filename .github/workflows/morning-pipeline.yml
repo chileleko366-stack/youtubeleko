@@ -134,33 +134,47 @@ jobs:
           CLOUDINARY_CLOUD_NAME: ${{ secrets.CLOUDINARY_CLOUD_NAME }}
         continue-on-error: true
 
-      - name: "[CH1] Assemble & upload video"
-        run: python -c "
+      - name: "[CH1] Assemble & save video"
+        run: |
+          python - <<'PYEOF'
           import json, sys, os, requests
           sys.path.insert(0, 'scripts')
           from assemble_video import assemble_video
-          from upload_youtube import upload_video
+          from upload_youtube import upload_video, is_youtube_configured
           from upload_drive import backup_to_drive
-          from telegram_notify import notify_success, notify_error
+          from telegram_notify import notify_success, notify_error, send_message
           from datetime import date
+
           cloud = os.environ['CLOUDINARY_CLOUD_NAME']
-          url = f'https://res.cloudinary.com/{cloud}/raw/upload/automation/manifests/{date.today().isoformat()}/ch1.json'
+          today = date.today().isoformat()
+          url = f'https://res.cloudinary.com/{cloud}/raw/upload/automation/manifests/{today}/ch1.json'
           r = requests.get(url, timeout=30)
           if r.status_code != 200:
               print('No manifest for ch1'); sys.exit(0)
+
           manifest = r.json()
           output_path = 'temp/final/ch1_final.mp4'
+          title = manifest.get('metadata', {}).get('title', 'Untitled')
+
           ok = assemble_video(manifest, None, [], [], output_path)
-          if ok:
+          if not ok:
+              notify_error('ch1', 'assembly', 'assemble_video failed')
+              sys.exit(0)
+
+          # Always back up to Drive first
+          drive_id = backup_to_drive(output_path, 'ch1', today)
+
+          # Upload to YouTube only if credentials are configured
+          if is_youtube_configured('ch1'):
               vid_id = upload_video(output_path, 'temp/thumbnails/ch1_thumbnail.png', manifest)
               if vid_id:
-                  backup_to_drive(output_path, 'ch1', date.today().isoformat())
-                  notify_success('ch1', manifest.get('channel_name', 'CH1'), manifest.get('metadata', {}).get('title', ''), vid_id)
+                  notify_success('ch1', manifest.get('channel_name', 'CH1'), title, vid_id)
               else:
-                  notify_error('ch1', 'upload', 'upload_video returned None')
+                  send_message(f"*CH1* video assembled and saved to Drive.\nTitle: {title}\nYouTube upload failed — check logs.")
           else:
-              notify_error('ch1', 'assembly', 'assemble_video failed')
-          "
+              drive_url = f"https://drive.google.com/file/d/{drive_id}" if drive_id else "Drive (check console)"
+              send_message(f"*CH1* video saved to Google Drive (YouTube tokens not yet configured).\nTitle: {title}\nDrive: {drive_url}")
+          PYEOF
         env:
           CLOUDINARY_CLOUD_NAME: ${{ secrets.CLOUDINARY_CLOUD_NAME }}
           YOUTUBE_CLIENT_ID: ${{ secrets.YOUTUBE_CLIENT_ID }}
@@ -172,11 +186,10 @@ jobs:
         continue-on-error: true
 
       # ── Repeat for CH2-CH5 (same pattern) ────────────────────────────────────
-      - name: "[CH2-CH5] Fetch footage, voiceover, thumbnail, render, assemble, upload"
+      - name: "[CH2-CH5] Fetch footage, voiceover, thumbnail, render, assemble, save"
         run: |
           python - <<'PYEOF'
           import asyncio
-          import json
           import os
           import sys
           from datetime import date
@@ -189,17 +202,11 @@ jobs:
           from generate_voiceover import generate_all_voiceovers
           from render_mographs import render_all_lines
           from stock_footage import fetch_all_footage
-          from telegram_notify import notify_error, notify_success
+          from telegram_notify import notify_error, notify_success, send_message
           from upload_drive import backup_to_drive
-          from upload_youtube import upload_video
+          from upload_youtube import is_youtube_configured, upload_video
 
           CHANNEL_IDS = ["ch2", "ch3", "ch4", "ch5"]
-          REFRESH_TOKENS = {
-              "ch2": os.environ.get("YOUTUBE_REFRESH_TOKEN_CH2"),
-              "ch3": os.environ.get("YOUTUBE_REFRESH_TOKEN_CH3"),
-              "ch4": os.environ.get("YOUTUBE_REFRESH_TOKEN_CH4"),
-              "ch5": os.environ.get("YOUTUBE_REFRESH_TOKEN_CH5"),
-          }
 
           cloud = os.environ["CLOUDINARY_CLOUD_NAME"]
           today = date.today().isoformat()
@@ -214,6 +221,7 @@ jobs:
                       continue
 
                   manifest = r.json()
+                  title = manifest.get("metadata", {}).get("title", "Untitled")
 
                   # Fetch footage
                   try:
@@ -230,7 +238,6 @@ jobs:
                   # Generate thumbnail
                   thumbnail_path = f"temp/thumbnails/{ch_id}_thumbnail.png"
                   try:
-                      title = manifest.get("metadata", {}).get("title", "Untitled")
                       cfg = manifest.get("channel_config", {})
                       cfg["_channel_id"] = ch_id
                       hint = manifest.get("metadata", {}).get("thumbnail_prompt")
@@ -252,18 +259,31 @@ jobs:
                       notify_error(ch_id, "assembly", "assemble_video failed")
                       continue
 
-                  # Upload to YouTube
-                  vid_id = upload_video(output_path, thumbnail_path, manifest)
-                  if vid_id:
-                      backup_to_drive(output_path, ch_id, today)
-                      notify_success(
-                          ch_id,
-                          manifest.get("channel_name", ch_id),
-                          manifest.get("metadata", {}).get("title", ""),
-                          vid_id,
-                      )
+                  # Always back up to Drive first
+                  drive_id = backup_to_drive(output_path, ch_id, today)
+
+                  # Upload to YouTube only if credentials are configured
+                  if is_youtube_configured(ch_id):
+                      vid_id = upload_video(output_path, thumbnail_path, manifest)
+                      if vid_id:
+                          notify_success(
+                              ch_id,
+                              manifest.get("channel_name", ch_id),
+                              title,
+                              vid_id,
+                          )
+                      else:
+                          send_message(
+                              f"*{ch_id.upper()}* video assembled and saved to Drive.\n"
+                              f"Title: {title}\nYouTube upload failed — check logs."
+                          )
                   else:
-                      notify_error(ch_id, "upload", "upload_video returned None")
+                      drive_url = f"https://drive.google.com/file/d/{drive_id}" if drive_id else "Drive (check console)"
+                      send_message(
+                          f"*{ch_id.upper()}* video saved to Google Drive "
+                          f"(YouTube tokens not yet configured).\n"
+                          f"Title: {title}\nDrive: {drive_url}"
+                      )
 
               except Exception as exc:
                   print(f"  ERROR for {ch_id}: {exc}")
