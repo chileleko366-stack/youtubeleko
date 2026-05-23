@@ -1,16 +1,18 @@
 """
-AI Client with Claude primary and Gemini fallback.
-Provides a unified interface for LLM text generation.
+AI Client backed by Groq (free tier — no credit card required).
+Primary model: llama-3.3-70b-versatile
+Fallback model: llama-3.1-8b-instant (faster, lower rate-limit cost)
+
+Get a free API key at https://console.groq.com
 """
 
-import os
 import logging
+import os
 import time
 from typing import Optional
 
-import anthropic
-import google.generativeai as genai
 from dotenv import load_dotenv
+from groq import Groq, RateLimitError, APIStatusError
 
 load_dotenv()
 
@@ -20,8 +22,8 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-CLAUDE_MODEL = "claude-sonnet-4-6"
-GEMINI_MODEL = "gemini-1.5-flash"
+PRIMARY_MODEL = "llama-3.3-70b-versatile"
+FALLBACK_MODEL = "llama-3.1-8b-instant"
 
 MAX_RETRIES = 3
 RETRY_DELAY = 2.0
@@ -29,31 +31,34 @@ RETRY_DELAY = 2.0
 
 class AIClient:
     """
-    Unified AI client that uses Claude as primary LLM with Gemini as fallback.
-    Handles retries, error logging, and provider switching transparently.
+    Groq-backed LLM client.
+    Tries PRIMARY_MODEL first; falls back to FALLBACK_MODEL on rate-limit or error.
+    Both models are available on Groq's free tier.
     """
 
     def __init__(self):
-        self._anthropic_client: Optional[anthropic.Anthropic] = None
-        self._gemini_configured = False
-        self._init_clients()
+        api_key = os.environ.get("GROQ_API_KEY")
+        if not api_key:
+            raise RuntimeError(
+                "GROQ_API_KEY is not set. "
+                "Get a free key at https://console.groq.com and add it to your .env / GitHub Secrets."
+            )
+        self._client = Groq(api_key=api_key)
+        logger.info("Groq client initialized (primary=%s, fallback=%s).", PRIMARY_MODEL, FALLBACK_MODEL)
 
-    def _init_clients(self):
-        """Initialize API clients from environment variables."""
-        anthropic_key = os.environ.get("ANTHROPIC_API_KEY")
-        if anthropic_key:
-            self._anthropic_client = anthropic.Anthropic(api_key=anthropic_key)
-            logger.info("Anthropic/Claude client initialized.")
-        else:
-            logger.warning("ANTHROPIC_API_KEY not set; Claude will be unavailable.")
+    def _call(self, model: str, prompt: str, system_prompt: str, max_tokens: int, temperature: float) -> str:
+        messages = []
+        if system_prompt:
+            messages.append({"role": "system", "content": system_prompt})
+        messages.append({"role": "user", "content": prompt})
 
-        gemini_key = os.environ.get("GEMINI_API_KEY")
-        if gemini_key:
-            genai.configure(api_key=gemini_key)
-            self._gemini_configured = True
-            logger.info("Google Gemini client initialized.")
-        else:
-            logger.warning("GEMINI_API_KEY not set; Gemini fallback will be unavailable.")
+        response = self._client.chat.completions.create(
+            model=model,
+            messages=messages,
+            max_tokens=max_tokens,
+            temperature=temperature,
+        )
+        return response.choices[0].message.content
 
     def generate(
         self,
@@ -63,87 +68,39 @@ class AIClient:
         temperature: float = 0.7,
     ) -> str:
         """
-        Generate text using Claude, falling back to Gemini on failure.
-
-        Args:
-            prompt: User prompt / content to send.
-            system_prompt: Optional system-level instructions.
-            max_tokens: Maximum tokens in the response.
-            temperature: Sampling temperature (0.0 – 1.0).
+        Generate text using Groq. Tries PRIMARY_MODEL with retries, then FALLBACK_MODEL.
 
         Returns:
             Generated text string.
 
         Raises:
-            RuntimeError: When all providers and retries are exhausted.
+            RuntimeError: When all attempts are exhausted.
         """
-        # Try Claude first
-        if self._anthropic_client:
+        for model in (PRIMARY_MODEL, FALLBACK_MODEL):
             for attempt in range(1, MAX_RETRIES + 1):
                 try:
-                    logger.info(
-                        "Claude attempt %d/%d for prompt (%.60s…)",
-                        attempt,
-                        MAX_RETRIES,
-                        prompt,
-                    )
-                    messages = [{"role": "user", "content": prompt}]
-                    kwargs = {
-                        "model": CLAUDE_MODEL,
-                        "max_tokens": max_tokens,
-                        "temperature": temperature,
-                        "messages": messages,
-                    }
-                    if system_prompt:
-                        kwargs["system"] = system_prompt
-
-                    response = self._anthropic_client.messages.create(**kwargs)
-                    result = response.content[0].text
-                    logger.info("Claude succeeded on attempt %d.", attempt)
+                    logger.info("Groq [%s] attempt %d/%d — %.60s…", model, attempt, MAX_RETRIES, prompt)
+                    result = self._call(model, prompt, system_prompt, max_tokens, temperature)
+                    logger.info("Groq [%s] succeeded on attempt %d.", model, attempt)
                     return result
-                except anthropic.RateLimitError as exc:
-                    logger.warning("Claude rate limit on attempt %d: %s", attempt, exc)
+                except RateLimitError as exc:
+                    wait = RETRY_DELAY * attempt
+                    logger.warning("Groq [%s] rate limit on attempt %d — waiting %.0fs: %s", model, attempt, wait, exc)
                     if attempt < MAX_RETRIES:
-                        time.sleep(RETRY_DELAY * attempt)
-                except anthropic.APIStatusError as exc:
-                    logger.warning("Claude API error on attempt %d: %s", attempt, exc)
+                        time.sleep(wait)
+                except APIStatusError as exc:
+                    logger.warning("Groq [%s] API error on attempt %d: %s", model, attempt, exc)
                     if attempt < MAX_RETRIES:
                         time.sleep(RETRY_DELAY)
                 except Exception as exc:  # pylint: disable=broad-except
-                    logger.warning("Claude unexpected error on attempt %d: %s", attempt, exc)
+                    logger.warning("Groq [%s] unexpected error on attempt %d: %s", model, attempt, exc)
                     if attempt < MAX_RETRIES:
                         time.sleep(RETRY_DELAY)
-
-        # Fallback to Gemini
-        if self._gemini_configured:
-            for attempt in range(1, MAX_RETRIES + 1):
-                try:
-                    logger.info(
-                        "Gemini fallback attempt %d/%d for prompt (%.60s…)",
-                        attempt,
-                        MAX_RETRIES,
-                        prompt,
-                    )
-                    model = genai.GenerativeModel(
-                        model_name=GEMINI_MODEL,
-                        system_instruction=system_prompt if system_prompt else None,
-                        generation_config=genai.GenerationConfig(
-                            max_output_tokens=max_tokens,
-                            temperature=temperature,
-                        ),
-                    )
-                    response = model.generate_content(prompt)
-                    result = response.text
-                    logger.info("Gemini succeeded on attempt %d.", attempt)
-                    return result
-                except Exception as exc:  # pylint: disable=broad-except
-                    logger.warning("Gemini error on attempt %d: %s", attempt, exc)
-                    if attempt < MAX_RETRIES:
-                        time.sleep(RETRY_DELAY)
+            logger.warning("Groq [%s] exhausted all %d attempts — trying next model.", model, MAX_RETRIES)
 
         raise RuntimeError(
-            "All LLM providers (Claude + Gemini) failed after retries. "
-            "Check API keys and quota."
+            f"All Groq models ({PRIMARY_MODEL}, {FALLBACK_MODEL}) failed after retries. "
+            "Check your GROQ_API_KEY and https://console.groq.com for quota status."
         )
 
 
