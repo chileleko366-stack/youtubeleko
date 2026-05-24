@@ -36,9 +36,10 @@ jobs:
       - name: Generate topics
         run: python scripts/generate_topics.py
         env:
-          # No AI API key needed — uses Pollinations.ai (free, no account required)
-          # Optionally set GROQ_API_KEY for a Groq fallback
+          # Set at least one free AI key. Groq recommended (console.groq.com — no credit card).
+          # Pipeline uses ~120K tokens/day total — well under Groq's 200K free daily limit.
           GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
+          OPENROUTER_KEY: ${{ secrets.OPENROUTER_KEY }}
           CLOUDINARY_CLOUD_NAME: ${{ secrets.CLOUDINARY_CLOUD_NAME }}
           CLOUDINARY_API_KEY: ${{ secrets.CLOUDINARY_API_KEY }}
           CLOUDINARY_API_SECRET: ${{ secrets.CLOUDINARY_API_SECRET }}
@@ -80,9 +81,8 @@ jobs:
       - name: Generate full production manifests
         run: python scripts/write_scripts.py
         env:
-          # No AI API key needed — uses Pollinations.ai (free, no account required)
-          # Optionally set GROQ_API_KEY for a Groq fallback
           GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
+          OPENROUTER_KEY: ${{ secrets.OPENROUTER_KEY }}
           CLOUDINARY_CLOUD_NAME: ${{ secrets.CLOUDINARY_CLOUD_NAME }}
           CLOUDINARY_API_KEY: ${{ secrets.CLOUDINARY_API_KEY }}
           CLOUDINARY_API_SECRET: ${{ secrets.CLOUDINARY_API_SECRET }}

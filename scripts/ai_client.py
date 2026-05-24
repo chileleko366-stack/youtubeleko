@@ -1,12 +1,18 @@
 """
-AI Client — Pollinations.ai text API (completely free, no API key required).
-Falls back to Groq if GROQ_API_KEY env var is set.
+AI Client — tries multiple free providers in order until one succeeds.
 
-Pollinations: https://text.pollinations.ai/ — no account, no key, no limits.
+Provider priority (use whichever key is set):
+  1. Groq        — GROQ_API_KEY    (free at console.groq.com, 200K tokens/day)
+  2. OpenRouter  — OPENROUTER_KEY  (free at openrouter.ai, 200 req/day free models)
+  3. Pollinations — no key needed   (https://text.pollinations.ai, attempted last)
+
+Set at least ONE key in GitHub Secrets. Groq is recommended — the pipeline
+uses ~120K tokens/day total (under the 200K free limit) when run once per day.
 """
 
 import logging
 import os
+import re
 import time
 from typing import Optional
 
@@ -21,73 +27,161 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
+MAX_RETRIES = 3
+RETRY_DELAY = 5.0
+
+
+# ---------------------------------------------------------------------------
+# Groq
+# ---------------------------------------------------------------------------
+
+GROQ_BASE_URL = "https://api.groq.com/openai/v1"
+GROQ_MODELS   = ("openai/gpt-oss-120b", "llama-3.3-70b-versatile")
+
+
+def _groq_generate(client, messages: list, max_tokens: int, temperature: float) -> str:
+    for model in GROQ_MODELS:
+        for attempt in range(1, MAX_RETRIES + 1):
+            try:
+                logger.info("Groq [%s] attempt %d/%d", model, attempt, MAX_RETRIES)
+                resp = client.chat.completions.create(
+                    model=model, messages=messages,
+                    max_tokens=max_tokens, temperature=temperature,
+                )
+                content = resp.choices[0].message.content
+                if not content or not content.strip():
+                    raise ValueError("Empty response")
+                logger.info("Groq [%s] succeeded.", model)
+                return content
+            except Exception as exc:
+                wait = _parse_groq_retry(exc) or (RETRY_DELAY * attempt)
+                logger.warning("Groq [%s] attempt %d failed (%.0fs wait): %s", model, attempt, wait, exc)
+                if attempt < MAX_RETRIES:
+                    time.sleep(wait)
+    raise RuntimeError("Groq exhausted all models and retries")
+
+
+def _parse_groq_retry(exc: Exception) -> Optional[float]:
+    try:
+        match = re.search(r"try again in (\d+)m(\d+\.?\d*)s", str(exc))
+        if match:
+            return min(int(match.group(1)) * 60 + float(match.group(2)) + 2.0, 300.0)
+    except Exception:  # pylint: disable=broad-except
+        pass
+    return None
+
+
+# ---------------------------------------------------------------------------
+# OpenRouter (free models)
+# ---------------------------------------------------------------------------
+
+OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1"
+OPENROUTER_MODELS   = (
+    "meta-llama/llama-3.3-70b-instruct:free",
+    "deepseek/deepseek-chat-v3-0324:free",
+    "google/gemma-3-27b-it:free",
+)
+
+
+def _openrouter_generate(client, messages: list, max_tokens: int, temperature: float) -> str:
+    for model in OPENROUTER_MODELS:
+        for attempt in range(1, MAX_RETRIES + 1):
+            try:
+                logger.info("OpenRouter [%s] attempt %d/%d", model, attempt, MAX_RETRIES)
+                resp = client.chat.completions.create(
+                    model=model, messages=messages,
+                    max_tokens=max_tokens, temperature=temperature,
+                    extra_headers={"HTTP-Referer": "https://github.com/youtubeleko"},
+                )
+                content = resp.choices[0].message.content
+                if not content or not content.strip():
+                    raise ValueError("Empty response")
+                logger.info("OpenRouter [%s] succeeded.", model)
+                return content
+            except Exception as exc:
+                logger.warning("OpenRouter [%s] attempt %d failed: %s", model, attempt, exc)
+                if attempt < MAX_RETRIES:
+                    time.sleep(RETRY_DELAY * attempt)
+    raise RuntimeError("OpenRouter exhausted all models and retries")
+
+
+# ---------------------------------------------------------------------------
+# Pollinations (no key needed)
+# ---------------------------------------------------------------------------
+
 POLLINATIONS_URL = "https://text.pollinations.ai/"
 
-# Groq fallback — only used if GROQ_API_KEY is set in environment
-GROQ_BASE_URL  = "https://api.groq.com/openai/v1"
-GROQ_MODELS    = ("openai/gpt-oss-120b", "llama-3.3-70b-versatile")
 
-MAX_RETRIES  = 4
-RETRY_DELAY  = 8.0
+def _pollinations_generate(messages: list, temperature: float) -> str:
+    for attempt in range(1, MAX_RETRIES + 1):
+        try:
+            logger.info("Pollinations attempt %d/%d", attempt, MAX_RETRIES)
+            resp = _http.post(
+                POLLINATIONS_URL,
+                json={
+                    "messages": messages,
+                    "model": "openai",
+                    "private": True,
+                    "seed": int(time.time()) % 99999,
+                    "temperature": temperature,
+                },
+                headers={
+                    "Content-Type": "application/json",
+                    "Referer": "https://pollinations.ai",
+                    "Origin": "https://pollinations.ai",
+                },
+                timeout=120,
+            )
+            resp.raise_for_status()
+            content = resp.text.strip()
+            if not content:
+                raise ValueError("Empty response")
+            logger.info("Pollinations succeeded.")
+            return content
+        except Exception as exc:
+            logger.warning("Pollinations attempt %d failed: %s", attempt, exc)
+            if attempt < MAX_RETRIES:
+                time.sleep(RETRY_DELAY * attempt)
+    raise RuntimeError("Pollinations exhausted all retries")
 
+
+# ---------------------------------------------------------------------------
+# AIClient
+# ---------------------------------------------------------------------------
 
 class AIClient:
     """
-    Primary: Pollinations.ai — no API key, free, unlimited.
-    Fallback: Groq — used only when GROQ_API_KEY is present.
+    Multi-provider LLM client. Tries configured providers in priority order.
+    Requires at least one of: GROQ_API_KEY or OPENROUTER_KEY.
+    Falls back to Pollinations (no key) as last resort.
     """
 
     def __init__(self):
+        from openai import OpenAI  # pylint: disable=import-outside-toplevel
+
         self._groq = None
+        self._openrouter = None
+
         groq_key = os.environ.get("GROQ_API_KEY")
         if groq_key:
-            try:
-                from openai import OpenAI as _OpenAI
-                self._groq = _OpenAI(api_key=groq_key, base_url=GROQ_BASE_URL)
-                logger.info("Groq fallback ready (%s).", GROQ_MODELS[0])
-            except Exception as exc:  # pylint: disable=broad-except
-                logger.warning("Could not init Groq fallback: %s", exc)
-        logger.info("AIClient ready — primary=pollinations, groq_fallback=%s", bool(self._groq))
+            self._groq = OpenAI(api_key=groq_key, base_url=GROQ_BASE_URL)
+            logger.info("Provider: Groq enabled (primary).")
 
-    # ------------------------------------------------------------------
-    # Pollinations
-    # ------------------------------------------------------------------
+        or_key = os.environ.get("OPENROUTER_KEY")
+        if or_key:
+            self._openrouter = OpenAI(api_key=or_key, base_url=OPENROUTER_BASE_URL)
+            logger.info("Provider: OpenRouter enabled.")
 
-    def _call_pollinations(self, messages: list, temperature: float) -> str:
-        payload = {
-            "messages": messages,
-            "model": "openai",
-            "private": True,
-            "seed": int(time.time()) % 99999,
-            "temperature": temperature,
-        }
-        resp = _http.post(POLLINATIONS_URL, json=payload, timeout=120)
-        resp.raise_for_status()
-        content = resp.text.strip()
-        if not content:
-            raise ValueError("Pollinations returned empty response")
-        return content
-
-    # ------------------------------------------------------------------
-    # Groq fallback
-    # ------------------------------------------------------------------
-
-    def _call_groq(self, model: str, messages: list, max_tokens: int, temperature: float) -> str:
-        from openai import RateLimitError, APIStatusError  # pylint: disable=import-outside-toplevel
-        response = self._groq.chat.completions.create(
-            model=model,
-            messages=messages,
-            max_tokens=max_tokens,
-            temperature=temperature,
+        logger.info(
+            "Provider: Pollinations enabled (no key, last resort)."
         )
-        content = response.choices[0].message.content
-        if not content or not content.strip():
-            raise ValueError("Groq returned empty response")
-        return content
 
-    # ------------------------------------------------------------------
-    # Public interface
-    # ------------------------------------------------------------------
+        if not self._groq and not self._openrouter:
+            logger.warning(
+                "No AI API key set. Using Pollinations only — set GROQ_API_KEY "
+                "in GitHub Secrets for more reliable generation. "
+                "Free key at console.groq.com (no credit card needed)."
+            )
 
     def generate(
         self,
@@ -96,52 +190,35 @@ class AIClient:
         max_tokens: int = 4096,
         temperature: float = 0.7,
     ) -> str:
-        """
-        Generate text. Tries Pollinations first (no key), then Groq if configured.
-        Raises RuntimeError when all providers are exhausted.
-        """
         messages = []
         if system_prompt:
             messages.append({"role": "system", "content": system_prompt})
         messages.append({"role": "user", "content": prompt})
 
-        last_err: Exception = RuntimeError("no attempts made")
+        errors = []
 
-        # ── Pollinations (primary, keyless) ───────────────────────────
-        for attempt in range(1, MAX_RETRIES + 1):
-            try:
-                logger.info("Pollinations attempt %d/%d — %.60s…", attempt, MAX_RETRIES, prompt)
-                result = self._call_pollinations(messages, temperature)
-                logger.info("Pollinations succeeded on attempt %d.", attempt)
-                return result
-            except Exception as exc:  # pylint: disable=broad-except
-                last_err = exc
-                wait = RETRY_DELAY * attempt
-                logger.warning("Pollinations attempt %d failed (%s) — retrying in %.0fs", attempt, exc, wait)
-                if attempt < MAX_RETRIES:
-                    time.sleep(wait)
-
-        logger.warning("Pollinations exhausted after %d attempts.", MAX_RETRIES)
-
-        # ── Groq fallback (optional) ───────────────────────────────────
         if self._groq:
-            for model in GROQ_MODELS:
-                for attempt in range(1, 3):
-                    try:
-                        logger.info("Groq [%s] fallback attempt %d — %.60s…", model, attempt, prompt)
-                        result = self._call_groq(model, messages, max_tokens, temperature)
-                        logger.info("Groq [%s] fallback succeeded.", model)
-                        return result
-                    except Exception as exc:  # pylint: disable=broad-except
-                        last_err = exc
-                        logger.warning("Groq [%s] fallback attempt %d failed: %s", model, attempt, exc)
-                        if attempt < 2:
-                            time.sleep(RETRY_DELAY)
+            try:
+                return _groq_generate(self._groq, messages, max_tokens, temperature)
+            except Exception as exc:
+                errors.append(f"Groq: {exc}")
+                logger.warning("Groq failed, trying next provider: %s", exc)
+
+        if self._openrouter:
+            try:
+                return _openrouter_generate(self._openrouter, messages, max_tokens, temperature)
+            except Exception as exc:
+                errors.append(f"OpenRouter: {exc}")
+                logger.warning("OpenRouter failed, trying next provider: %s", exc)
+
+        try:
+            return _pollinations_generate(messages, temperature)
+        except Exception as exc:
+            errors.append(f"Pollinations: {exc}")
 
         raise RuntimeError(
-            f"All AI providers failed. Last error: {last_err}\n"
-            "Pollinations.ai is the primary (no key needed). "
-            "Optionally set GROQ_API_KEY for a Groq fallback."
+            "All AI providers failed:\n" + "\n".join(f"  - {e}" for e in errors) + "\n"
+            "Set GROQ_API_KEY in GitHub Secrets (free at console.groq.com)."
         )
 
 
