@@ -1,7 +1,8 @@
 """
 AI Client using Groq's OpenAI-compatible endpoint.
-Primary model : openai/gpt-oss-120b  (via https://api.groq.com/openai/v1)
-Fallback model: llama-3.3-70b-versatile
+Primary model   : openai/gpt-oss-120b  (via https://api.groq.com/openai/v1)
+Fallback model  : llama-3.3-70b-versatile
+Fallback model 2: llama-3.1-8b-instant  (higher TPM, lower token cost)
 """
 
 import logging
@@ -20,9 +21,10 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-GROQ_BASE_URL = "https://api.groq.com/openai/v1"
-PRIMARY_MODEL  = "openai/gpt-oss-120b"
-FALLBACK_MODEL = "llama-3.3-70b-versatile"
+GROQ_BASE_URL    = "https://api.groq.com/openai/v1"
+PRIMARY_MODEL    = "openai/gpt-oss-120b"
+FALLBACK_MODEL   = "llama-3.3-70b-versatile"
+FALLBACK_MODEL_2 = "llama-3.1-8b-instant"
 
 MAX_RETRIES = 3
 RETRY_DELAY = 2.0
@@ -42,7 +44,10 @@ class AIClient:
                 "Add it to your .env file or GitHub Secrets."
             )
         self._client = OpenAI(api_key=api_key, base_url=GROQ_BASE_URL)
-        logger.info("Groq client ready (primary=%s, fallback=%s).", PRIMARY_MODEL, FALLBACK_MODEL)
+        logger.info(
+            "Groq client ready (primary=%s, fallback=%s, fallback2=%s).",
+            PRIMARY_MODEL, FALLBACK_MODEL, FALLBACK_MODEL_2,
+        )
 
     def _call(self, model: str, prompt: str, system_prompt: str, max_tokens: int, temperature: float) -> str:
         messages = []
@@ -74,7 +79,7 @@ class AIClient:
         Raises:
             RuntimeError: when all attempts are exhausted.
         """
-        for model in (PRIMARY_MODEL, FALLBACK_MODEL):
+        for model in (PRIMARY_MODEL, FALLBACK_MODEL, FALLBACK_MODEL_2):
             for attempt in range(1, MAX_RETRIES + 1):
                 try:
                     logger.info("Groq [%s] attempt %d/%d — %.60s…", model, attempt, MAX_RETRIES, prompt)
@@ -97,8 +102,8 @@ class AIClient:
             logger.warning("Groq [%s] exhausted — trying fallback.", model)
 
         raise RuntimeError(
-            f"All Groq models ({PRIMARY_MODEL}, {FALLBACK_MODEL}) failed after retries. "
-            "Check GROQ_API_KEY and https://console.groq.com for quota status."
+            f"All Groq models ({PRIMARY_MODEL}, {FALLBACK_MODEL}, {FALLBACK_MODEL_2}) "
+            "failed after retries. Check GROQ_API_KEY and https://console.groq.com for quota status."
         )
 
 

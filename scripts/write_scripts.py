@@ -47,6 +47,8 @@ CHANNEL_CONFIG_FILES = {
     "ch5": "ch5-quiet-record.json",
 }
 
+BATCH_SIZE = 20  # lines per LLM call in stages 5 and 6
+
 TREATMENT_OPTIONS = [
     "TextReveal",
     "SplitScreen",
@@ -329,27 +331,35 @@ Return ONLY the JSON array, no extra text."""
 def stage_5_visual_treatments(
     lines: List[Dict[str, Any]], channel_config: Dict[str, Any]
 ) -> List[Dict[str, Any]]:
-    """Assign a Remotion composition treatment to each line."""
+    """Assign a Remotion composition treatment to each line, processed in batches."""
     client = get_client()
     name = channel_config["channel_name"]
     brand_color = channel_config.get("brand_color", "#ffffff")
     bg_color = channel_config.get("background_color", "#000000")
     font_primary = channel_config.get("font_primary", "Inter")
     font_secondary = channel_config.get("font_secondary", "Inter")
-
+    channel_id = channel_config["_channel_id"]
     available = ", ".join(TREATMENT_OPTIONS)
-    lines_json = json.dumps(lines, indent=2)
 
-    system = f"You are the motion graphics director for '{name}'. You select visual treatments for each script line."
+    system = f"You are the motion graphics director for '{name}'. Assign visual composition treatments."
 
-    prompt = f"""Assign a visual treatment composition to each line:
+    # Send only line_number + text + type — strips all other fields to stay within TPM limits
+    slim_lines = [
+        {"line_number": ln["line_number"], "text": ln["text"], "type": ln["type"]}
+        for ln in lines
+    ]
 
-Lines:
-{lines_json}
+    treatment_map: Dict[int, str] = {}
+    for i in range(0, len(slim_lines), BATCH_SIZE):
+        batch = slim_lines[i:i + BATCH_SIZE]
+        if i > 0:
+            time.sleep(2)  # avoid TPM bursting between batches
+        batch_json = json.dumps(batch, indent=2)
+        prompt = f"""Assign a visual treatment composition to each script line.
 
 Available compositions: {available}
-Channel brand color: {brand_color} on {bg_color}
-Fonts: {font_primary} (primary), {font_secondary} (secondary)
+Lines:
+{batch_json}
 
 Selection guide:
 - TextReveal: narration lines with single key message
@@ -366,18 +376,32 @@ Selection guide:
 - ArchiveFootage: historical context
 - BrainDiagram: psychological/scientific concepts
 
-Add to each line object:
-  "treatment": "<CompositionName>",
-  "brand_color": "{brand_color}",
-  "background_color": "{bg_color}",
-  "font_primary": "{font_primary}",
-  "font_secondary": "{font_secondary}"
+Return ONLY a valid JSON array — one object per line:
+{{"line_number": <int>, "treatment": "<CompositionName>"}}
 
-Return ONLY the updated JSON array with the new fields added. No extra text."""
+No extra text."""
 
-    channel_id = channel_config["_channel_id"]
-    return _call_json_stage("stage_5_visual_treatments", channel_id,
-        lambda: client.generate(prompt=prompt, system_prompt=system, max_tokens=8000, temperature=0.4))
+        batch_label = f"stage_5_batch_{i // BATCH_SIZE + 1}"
+        batch_results = _call_json_stage(
+            batch_label,
+            channel_id,
+            lambda p=prompt: client.generate(prompt=p, system_prompt=system, max_tokens=600, temperature=0.4),
+        )
+        for item in batch_results:
+            treatment_map[item["line_number"]] = item.get("treatment", "TextReveal")
+
+    # Merge treatment + static brand fields back into the full line objects
+    static_fields = {
+        "brand_color": brand_color,
+        "background_color": bg_color,
+        "font_primary": font_primary,
+        "font_secondary": font_secondary,
+    }
+    for line in lines:
+        ln = line.get("line_number")
+        line["treatment"] = treatment_map.get(ln, "TextReveal")
+        line.update(static_fields)
+    return lines
 
 
 # ---------------------------------------------------------------------------
@@ -387,21 +411,37 @@ Return ONLY the updated JSON array with the new fields added. No extra text."""
 def stage_6_b_roll_keywords(
     lines: List[Dict[str, Any]], channel_config: Dict[str, Any]
 ) -> List[Dict[str, Any]]:
-    """Generate Pexels search keywords for each line."""
+    """Generate Pexels search keywords for each line, processed in batches."""
     client = get_client()
     name = channel_config["channel_name"]
     b_roll_intensity = channel_config.get("b_roll_intensity", 50)
+    channel_id = channel_config["_channel_id"]
 
-    lines_json = json.dumps(lines, indent=2)
+    system = f"You are the stock footage coordinator for '{name}'. Generate Pexels search keywords for stock video."
 
-    system = f"You are the stock footage coordinator for '{name}'. You identify the best search terms for stock video."
+    # Send only the fields the LLM needs — omit brand/duration/cumulative fields
+    slim_lines = [
+        {
+            "line_number": ln["line_number"],
+            "text": ln["text"],
+            "type": ln["type"],
+            "treatment": ln.get("treatment", ""),
+        }
+        for ln in lines
+    ]
 
-    prompt = f"""Generate Pexels stock footage search keywords for each line:
-
-Lines:
-{lines_json}
+    keyword_map: Dict[int, List[str]] = {}
+    for i in range(0, len(slim_lines), BATCH_SIZE):
+        batch = slim_lines[i:i + BATCH_SIZE]
+        if i > 0:
+            time.sleep(2)
+        batch_json = json.dumps(batch, indent=2)
+        prompt = f"""Generate Pexels stock footage search keywords for each script line.
 
 B-roll intensity: {b_roll_intensity}/100 (higher = more b-roll coverage needed)
+Lines:
+{batch_json}
+
 Rules:
 - 2–4 keywords per line, specific and visual
 - For b_roll_note lines: use the note's subject directly
@@ -409,14 +449,24 @@ Rules:
 - Avoid copyrighted names; use descriptive visual terms
 - Keywords must work as Pexels search queries
 
-Add to each line object:
-  "b_roll_keywords": ["keyword1", "keyword2", "keyword3"]
+Return ONLY a valid JSON array — one object per line:
+{{"line_number": <int>, "b_roll_keywords": ["keyword1", "keyword2"]}}
 
-Return ONLY the updated JSON array. No extra text."""
+No extra text."""
 
-    channel_id = channel_config["_channel_id"]
-    return _call_json_stage("stage_6_b_roll_keywords", channel_id,
-        lambda: client.generate(prompt=prompt, system_prompt=system, max_tokens=8000, temperature=0.4))
+        batch_label = f"stage_6_batch_{i // BATCH_SIZE + 1}"
+        batch_results = _call_json_stage(
+            batch_label,
+            channel_id,
+            lambda p=prompt: client.generate(prompt=p, system_prompt=system, max_tokens=600, temperature=0.4),
+        )
+        for item in batch_results:
+            keyword_map[item["line_number"]] = item.get("b_roll_keywords", [])
+
+    for line in lines:
+        ln = line.get("line_number")
+        line["b_roll_keywords"] = keyword_map.get(ln, [])
+    return lines
 
 
 # ---------------------------------------------------------------------------
@@ -479,21 +529,27 @@ def generate_complete_manifest(
     title = topic["title"]
     logger.info("[%s] Stage 1 – Outline for: %s", channel_id, title)
     outline = stage_1_outline(topic, channel_config)
+    time.sleep(3)
 
     logger.info("[%s] Stage 2 – Research", channel_id)
     research = stage_2_research(outline, channel_config)
+    time.sleep(3)
 
     logger.info("[%s] Stage 3 – Full script", channel_id)
     script = stage_3_full_script(research, channel_config)
+    time.sleep(3)
 
     logger.info("[%s] Stage 4 – Line breakdown", channel_id)
     lines = stage_4_line_breakdown(script, channel_config)
+    time.sleep(3)
 
-    logger.info("[%s] Stage 5 – Visual treatments", channel_id)
+    logger.info("[%s] Stage 5 – Visual treatments (%d lines, %d batches)", channel_id, len(lines), -(-len(lines) // BATCH_SIZE))
     lines = stage_5_visual_treatments(lines, channel_config)
+    time.sleep(3)
 
     logger.info("[%s] Stage 6 – B-roll keywords", channel_id)
     lines = stage_6_b_roll_keywords(lines, channel_config)
+    time.sleep(3)
 
     logger.info("[%s] Stage 7 – Metadata", channel_id)
     metadata = stage_7_metadata(topic, script, channel_config)
