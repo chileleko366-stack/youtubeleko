@@ -160,7 +160,7 @@ def upload_topics_to_cloudinary(channel_id: str, topics: List[Dict], date_str: s
     """Upload topics JSON to Cloudinary as a raw file. Returns the secure URL."""
     payload = json.dumps({"channel_id": channel_id, "date": date_str, "topics": topics}, indent=2)
 
-    public_id = f"automation/topics/{date_str}/{channel_id}"
+    public_id = f"automation/topics/{date_str}/{channel_id}.json"
     result = cloudinary.uploader.upload(
         payload.encode("utf-8"),
         resource_type="raw",

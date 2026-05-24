@@ -485,7 +485,7 @@ def _download_topics(channel_id: str, date_str: str) -> List[Dict[str, Any]]:
 
 def _upload_manifest(channel_id: str, manifest: Dict[str, Any], date_str: str) -> str:
     payload = json.dumps(manifest, indent=2)
-    public_id = f"automation/manifests/{date_str}/{channel_id}"
+    public_id = f"automation/manifests/{date_str}/{channel_id}.json"
     result = cloudinary.uploader.upload(
         payload.encode("utf-8"),
         resource_type="raw",
