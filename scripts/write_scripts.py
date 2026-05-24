@@ -18,13 +18,15 @@ import json
 import logging
 import os
 import re
+import time
 from datetime import date
-from typing import Any, Dict, List
+from typing import Any, Callable, Dict, List
 
 import cloudinary
 import cloudinary.uploader
 import requests
 from dotenv import load_dotenv
+from json_repair import repair_json
 
 from ai_client import get_client
 
@@ -85,13 +87,60 @@ def _clean_json(raw: str) -> str:
     raw = raw.strip()
     if raw.startswith("```"):
         parts = raw.split("```")
-        if len(parts) >= 3:
-            raw = parts[1]
-        else:
-            raw = parts[-1]
+        raw = parts[1] if len(parts) >= 3 else parts[-1]
         if raw.startswith("json"):
             raw = raw[4:]
     return raw.strip()
+
+
+def _call_json_stage(
+    stage_name: str,
+    channel_id: str,
+    call_fn: Callable[[], str],
+    max_retries: int = 3,
+) -> Any:
+    """
+    Run an LLM call that must return JSON. On JSONDecodeError:
+      1. Try json-repair on the raw output (fixes truncated strings/missing commas).
+      2. If repair also fails, retry the full LLM call up to max_retries times.
+    """
+    last_err: Exception = RuntimeError("no attempts made")
+    for attempt in range(1, max_retries + 1):
+        if attempt > 1:
+            wait = attempt * 6
+            logger.warning(
+                "[%s] %s parse error — retrying in %ds (attempt %d/%d)",
+                channel_id, stage_name, wait, attempt, max_retries,
+            )
+            time.sleep(wait)
+        try:
+            raw = call_fn()
+            cleaned = _clean_json(raw)
+
+            # Fast path: valid JSON
+            try:
+                return json.loads(cleaned)
+            except json.JSONDecodeError:
+                pass
+
+            # Repair path: fix truncated / malformed JSON
+            repaired = repair_json(cleaned, return_objects=False)
+            if repaired:
+                result = json.loads(repaired)
+                logger.info("[%s] %s: json-repair recovered truncated output.", channel_id, stage_name)
+                return result
+
+            raise json.JSONDecodeError("repair produced empty string", cleaned, 0)
+
+        except json.JSONDecodeError as exc:
+            last_err = exc
+        except Exception as exc:  # pylint: disable=broad-except
+            last_err = exc
+            logger.warning("[%s] %s unexpected error on attempt %d: %s", channel_id, stage_name, attempt, exc)
+
+    raise RuntimeError(
+        f"[{channel_id}] {stage_name} failed after {max_retries} attempts. Last error: {last_err}"
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -138,8 +187,9 @@ Return ONLY a valid JSON object:
 
 Aim for 5–8 sections. Return ONLY the JSON, no extra text."""
 
-    raw = client.generate(prompt=prompt, system_prompt=system, max_tokens=2000, temperature=0.7)
-    return json.loads(_clean_json(raw))
+    channel_id = channel_config["_channel_id"]
+    return _call_json_stage("stage_1_outline", channel_id,
+        lambda: client.generate(prompt=prompt, system_prompt=system, max_tokens=2500, temperature=0.7))
 
 
 # ---------------------------------------------------------------------------
@@ -176,8 +226,9 @@ Return ONLY a valid JSON object — the same structure as the input outline but 
 
 Return ONLY the JSON, no extra text."""
 
-    raw = client.generate(prompt=prompt, system_prompt=system, max_tokens=3000, temperature=0.5)
-    return json.loads(_clean_json(raw))
+    channel_id = channel_config["_channel_id"]
+    return _call_json_stage("stage_2_research", channel_id,
+        lambda: client.generate(prompt=prompt, system_prompt=system, max_tokens=8000, temperature=0.5))
 
 
 # ---------------------------------------------------------------------------
@@ -266,8 +317,9 @@ Return ONLY a valid JSON array where each element is:
 
 Return ONLY the JSON array, no extra text."""
 
-    raw = client.generate(prompt=prompt, system_prompt=system, max_tokens=4096, temperature=0.3)
-    return json.loads(_clean_json(raw))
+    channel_id = channel_config["_channel_id"]
+    return _call_json_stage("stage_4_line_breakdown", channel_id,
+        lambda: client.generate(prompt=prompt, system_prompt=system, max_tokens=8000, temperature=0.3))
 
 
 # ---------------------------------------------------------------------------
@@ -323,8 +375,9 @@ Add to each line object:
 
 Return ONLY the updated JSON array with the new fields added. No extra text."""
 
-    raw = client.generate(prompt=prompt, system_prompt=system, max_tokens=4096, temperature=0.4)
-    return json.loads(_clean_json(raw))
+    channel_id = channel_config["_channel_id"]
+    return _call_json_stage("stage_5_visual_treatments", channel_id,
+        lambda: client.generate(prompt=prompt, system_prompt=system, max_tokens=8000, temperature=0.4))
 
 
 # ---------------------------------------------------------------------------
@@ -361,8 +414,9 @@ Add to each line object:
 
 Return ONLY the updated JSON array. No extra text."""
 
-    raw = client.generate(prompt=prompt, system_prompt=system, max_tokens=4096, temperature=0.4)
-    return json.loads(_clean_json(raw))
+    channel_id = channel_config["_channel_id"]
+    return _call_json_stage("stage_6_b_roll_keywords", channel_id,
+        lambda: client.generate(prompt=prompt, system_prompt=system, max_tokens=8000, temperature=0.4))
 
 
 # ---------------------------------------------------------------------------
@@ -408,8 +462,9 @@ Return ONLY a valid JSON object:
 Category IDs: 22=People & Blogs, 25=News & Politics, 27=Education, 28=Science & Technology
 Pick the most appropriate. Return ONLY the JSON, no extra text."""
 
-    raw = client.generate(prompt=prompt, system_prompt=system, max_tokens=2000, temperature=0.6)
-    return json.loads(_clean_json(raw))
+    channel_id = channel_config["_channel_id"]
+    return _call_json_stage("stage_7_metadata", channel_id,
+        lambda: client.generate(prompt=prompt, system_prompt=system, max_tokens=2000, temperature=0.6))
 
 
 # ---------------------------------------------------------------------------
