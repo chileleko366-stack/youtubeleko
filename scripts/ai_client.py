@@ -1,12 +1,12 @@
 """
 AI Client using Google Gemini's OpenAI-compatible endpoint.
-Primary model   : gemini-2.0-flash  (1,500 req/day free, 4M TPM — no daily token cap issues)
-Fallback model  : gemini-1.5-flash
-Fallback model 2: gemini-1.5-flash-8b
+Primary model   : gemini-2.0-flash       (15 RPM / 1,500 RPD free)
+Fallback model  : gemini-2.0-flash-lite  (30 RPM / 1,500 RPD free — faster fallback)
 """
 
 import logging
 import os
+import re
 import time
 from typing import Optional
 
@@ -23,17 +23,28 @@ logger = logging.getLogger(__name__)
 
 GEMINI_BASE_URL  = "https://generativelanguage.googleapis.com/v1beta/openai/"
 PRIMARY_MODEL    = "gemini-2.0-flash"
-FALLBACK_MODEL   = "gemini-1.5-flash"
-FALLBACK_MODEL_2 = "gemini-1.5-flash-8b"
+FALLBACK_MODEL   = "gemini-2.0-flash-lite"
 
-MAX_RETRIES = 3
-RETRY_DELAY = 2.0
+MAX_RETRIES  = 3
+RETRY_DELAY  = 5.0
+MAX_WAIT     = 120.0  # cap any single sleep at 2 minutes
+
+
+def _parse_retry_after(exc: Exception) -> float:
+    """Extract seconds from Gemini 'Please retry in X.Xs' error messages."""
+    try:
+        match = re.search(r"Please retry in (\d+\.?\d*)s", str(exc))
+        if match:
+            return min(float(match.group(1)) + 2.0, MAX_WAIT)
+    except Exception:  # pylint: disable=broad-except
+        pass
+    return None
 
 
 class AIClient:
     """
     LLM client backed by Google Gemini's OpenAI-compatible API.
-    Tries PRIMARY_MODEL first; falls back through FALLBACK_MODEL and FALLBACK_MODEL_2.
+    Honors Gemini's 'retry after' hints instead of fixed backoff.
     """
 
     def __init__(self):
@@ -45,8 +56,8 @@ class AIClient:
             )
         self._client = OpenAI(api_key=api_key, base_url=GEMINI_BASE_URL)
         logger.info(
-            "Gemini client ready (primary=%s, fallback=%s, fallback2=%s).",
-            PRIMARY_MODEL, FALLBACK_MODEL, FALLBACK_MODEL_2,
+            "Gemini client ready (primary=%s, fallback=%s).",
+            PRIMARY_MODEL, FALLBACK_MODEL,
         )
 
     def _call(self, model: str, prompt: str, system_prompt: str, max_tokens: int, temperature: float) -> str:
@@ -74,12 +85,13 @@ class AIClient:
         temperature: float = 0.7,
     ) -> str:
         """
-        Generate text. Tries PRIMARY_MODEL with retries, then fallbacks.
+        Generate text. Tries PRIMARY_MODEL with retries, then FALLBACK_MODEL.
+        On 429, uses Gemini's retry-after hint to avoid wasteful short sleeps.
 
         Raises:
             RuntimeError: when all attempts are exhausted.
         """
-        for model in (PRIMARY_MODEL, FALLBACK_MODEL, FALLBACK_MODEL_2):
+        for model in (PRIMARY_MODEL, FALLBACK_MODEL):
             for attempt in range(1, MAX_RETRIES + 1):
                 try:
                     logger.info("Gemini [%s] attempt %d/%d — %.60s…", model, attempt, MAX_RETRIES, prompt)
@@ -87,8 +99,11 @@ class AIClient:
                     logger.info("Gemini [%s] succeeded on attempt %d.", model, attempt)
                     return result
                 except RateLimitError as exc:
-                    wait = RETRY_DELAY * attempt
-                    logger.warning("Gemini [%s] rate limit (attempt %d) — waiting %.0fs: %s", model, attempt, wait, exc)
+                    wait = _parse_retry_after(exc) or (RETRY_DELAY * attempt)
+                    logger.warning(
+                        "Gemini [%s] rate limit (attempt %d) — waiting %.0fs: %s",
+                        model, attempt, wait, exc,
+                    )
                     if attempt < MAX_RETRIES:
                         time.sleep(wait)
                 except APIStatusError as exc:
@@ -102,8 +117,9 @@ class AIClient:
             logger.warning("Gemini [%s] exhausted — trying fallback.", model)
 
         raise RuntimeError(
-            f"All Gemini models ({PRIMARY_MODEL}, {FALLBACK_MODEL}, {FALLBACK_MODEL_2}) "
-            "failed after retries. Check GEMINI_API_KEY at https://aistudio.google.com/apikey"
+            f"All Gemini models ({PRIMARY_MODEL}, {FALLBACK_MODEL}) failed after retries. "
+            "Check GEMINI_API_KEY at https://aistudio.google.com/apikey — "
+            "must be created in AI Studio, not Google Cloud Console."
         )
 
 

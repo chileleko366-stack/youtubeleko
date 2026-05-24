@@ -179,7 +179,10 @@ def main():
     date_str = date.today().isoformat()
     results = {}
 
-    for channel_id in CHANNEL_CONFIG_FILES:
+    channel_ids = list(CHANNEL_CONFIG_FILES.keys())
+    for i, channel_id in enumerate(channel_ids):
+        if i > 0:
+            time.sleep(6)  # stay within Gemini's 15 RPM free tier between channels
         try:
             logger.info("Processing channel: %s", channel_id)
             config = load_channel_config(channel_id)
