@@ -1,17 +1,17 @@
 """
-AI Client using Google Gemini's OpenAI-compatible endpoint.
-Primary model   : gemini-2.0-flash       (15 RPM / 1,500 RPD free)
-Fallback model  : gemini-2.0-flash-lite  (30 RPM / 1,500 RPD free — faster fallback)
+AI Client — Pollinations.ai text API (completely free, no API key required).
+Falls back to Groq if GROQ_API_KEY env var is set.
+
+Pollinations: https://text.pollinations.ai/ — no account, no key, no limits.
 """
 
 import logging
 import os
-import re
 import time
 from typing import Optional
 
+import requests as _http
 from dotenv import load_dotenv
-from openai import OpenAI, RateLimitError, APIStatusError
 
 load_dotenv()
 
@@ -21,52 +21,60 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-GEMINI_BASE_URL  = "https://generativelanguage.googleapis.com/v1beta/openai/"
-PRIMARY_MODEL    = "gemini-2.0-flash"
-FALLBACK_MODEL   = "gemini-2.0-flash-lite"
+POLLINATIONS_URL = "https://text.pollinations.ai/"
 
-MAX_RETRIES  = 3
-RETRY_DELAY  = 5.0
-MAX_WAIT     = 120.0  # cap any single sleep at 2 minutes
+# Groq fallback — only used if GROQ_API_KEY is set in environment
+GROQ_BASE_URL  = "https://api.groq.com/openai/v1"
+GROQ_MODELS    = ("openai/gpt-oss-120b", "llama-3.3-70b-versatile")
 
-
-def _parse_retry_after(exc: Exception) -> float:
-    """Extract seconds from Gemini 'Please retry in X.Xs' error messages."""
-    try:
-        match = re.search(r"Please retry in (\d+\.?\d*)s", str(exc))
-        if match:
-            return min(float(match.group(1)) + 2.0, MAX_WAIT)
-    except Exception:  # pylint: disable=broad-except
-        pass
-    return None
+MAX_RETRIES  = 4
+RETRY_DELAY  = 8.0
 
 
 class AIClient:
     """
-    LLM client backed by Google Gemini's OpenAI-compatible API.
-    Honors Gemini's 'retry after' hints instead of fixed backoff.
+    Primary: Pollinations.ai — no API key, free, unlimited.
+    Fallback: Groq — used only when GROQ_API_KEY is present.
     """
 
     def __init__(self):
-        api_key = os.environ.get("GEMINI_API_KEY")
-        if not api_key:
-            raise RuntimeError(
-                "GEMINI_API_KEY is not set. "
-                "Get a free key at https://aistudio.google.com/apikey and add it to GitHub Secrets."
-            )
-        self._client = OpenAI(api_key=api_key, base_url=GEMINI_BASE_URL)
-        logger.info(
-            "Gemini client ready (primary=%s, fallback=%s).",
-            PRIMARY_MODEL, FALLBACK_MODEL,
-        )
+        self._groq = None
+        groq_key = os.environ.get("GROQ_API_KEY")
+        if groq_key:
+            try:
+                from openai import OpenAI as _OpenAI
+                self._groq = _OpenAI(api_key=groq_key, base_url=GROQ_BASE_URL)
+                logger.info("Groq fallback ready (%s).", GROQ_MODELS[0])
+            except Exception as exc:  # pylint: disable=broad-except
+                logger.warning("Could not init Groq fallback: %s", exc)
+        logger.info("AIClient ready — primary=pollinations, groq_fallback=%s", bool(self._groq))
 
-    def _call(self, model: str, prompt: str, system_prompt: str, max_tokens: int, temperature: float) -> str:
-        messages = []
-        if system_prompt:
-            messages.append({"role": "system", "content": system_prompt})
-        messages.append({"role": "user", "content": prompt})
+    # ------------------------------------------------------------------
+    # Pollinations
+    # ------------------------------------------------------------------
 
-        response = self._client.chat.completions.create(
+    def _call_pollinations(self, messages: list, temperature: float) -> str:
+        payload = {
+            "messages": messages,
+            "model": "openai",
+            "private": True,
+            "seed": int(time.time()) % 99999,
+            "temperature": temperature,
+        }
+        resp = _http.post(POLLINATIONS_URL, json=payload, timeout=120)
+        resp.raise_for_status()
+        content = resp.text.strip()
+        if not content:
+            raise ValueError("Pollinations returned empty response")
+        return content
+
+    # ------------------------------------------------------------------
+    # Groq fallback
+    # ------------------------------------------------------------------
+
+    def _call_groq(self, model: str, messages: list, max_tokens: int, temperature: float) -> str:
+        from openai import RateLimitError, APIStatusError  # pylint: disable=import-outside-toplevel
+        response = self._groq.chat.completions.create(
             model=model,
             messages=messages,
             max_tokens=max_tokens,
@@ -74,8 +82,12 @@ class AIClient:
         )
         content = response.choices[0].message.content
         if not content or not content.strip():
-            raise ValueError("LLM returned empty response — treating as retryable error")
+            raise ValueError("Groq returned empty response")
         return content
+
+    # ------------------------------------------------------------------
+    # Public interface
+    # ------------------------------------------------------------------
 
     def generate(
         self,
@@ -85,41 +97,51 @@ class AIClient:
         temperature: float = 0.7,
     ) -> str:
         """
-        Generate text. Tries PRIMARY_MODEL with retries, then FALLBACK_MODEL.
-        On 429, uses Gemini's retry-after hint to avoid wasteful short sleeps.
-
-        Raises:
-            RuntimeError: when all attempts are exhausted.
+        Generate text. Tries Pollinations first (no key), then Groq if configured.
+        Raises RuntimeError when all providers are exhausted.
         """
-        for model in (PRIMARY_MODEL, FALLBACK_MODEL):
-            for attempt in range(1, MAX_RETRIES + 1):
-                try:
-                    logger.info("Gemini [%s] attempt %d/%d — %.60s…", model, attempt, MAX_RETRIES, prompt)
-                    result = self._call(model, prompt, system_prompt, max_tokens, temperature)
-                    logger.info("Gemini [%s] succeeded on attempt %d.", model, attempt)
-                    return result
-                except RateLimitError as exc:
-                    wait = _parse_retry_after(exc) or (RETRY_DELAY * attempt)
-                    logger.warning(
-                        "Gemini [%s] rate limit (attempt %d) — waiting %.0fs: %s",
-                        model, attempt, wait, exc,
-                    )
-                    if attempt < MAX_RETRIES:
-                        time.sleep(wait)
-                except APIStatusError as exc:
-                    logger.warning("Gemini [%s] API error on attempt %d: %s", model, attempt, exc)
-                    if attempt < MAX_RETRIES:
-                        time.sleep(RETRY_DELAY)
-                except Exception as exc:  # pylint: disable=broad-except
-                    logger.warning("Gemini [%s] unexpected error on attempt %d: %s", model, attempt, exc)
-                    if attempt < MAX_RETRIES:
-                        time.sleep(RETRY_DELAY)
-            logger.warning("Gemini [%s] exhausted — trying fallback.", model)
+        messages = []
+        if system_prompt:
+            messages.append({"role": "system", "content": system_prompt})
+        messages.append({"role": "user", "content": prompt})
+
+        last_err: Exception = RuntimeError("no attempts made")
+
+        # ── Pollinations (primary, keyless) ───────────────────────────
+        for attempt in range(1, MAX_RETRIES + 1):
+            try:
+                logger.info("Pollinations attempt %d/%d — %.60s…", attempt, MAX_RETRIES, prompt)
+                result = self._call_pollinations(messages, temperature)
+                logger.info("Pollinations succeeded on attempt %d.", attempt)
+                return result
+            except Exception as exc:  # pylint: disable=broad-except
+                last_err = exc
+                wait = RETRY_DELAY * attempt
+                logger.warning("Pollinations attempt %d failed (%s) — retrying in %.0fs", attempt, exc, wait)
+                if attempt < MAX_RETRIES:
+                    time.sleep(wait)
+
+        logger.warning("Pollinations exhausted after %d attempts.", MAX_RETRIES)
+
+        # ── Groq fallback (optional) ───────────────────────────────────
+        if self._groq:
+            for model in GROQ_MODELS:
+                for attempt in range(1, 3):
+                    try:
+                        logger.info("Groq [%s] fallback attempt %d — %.60s…", model, attempt, prompt)
+                        result = self._call_groq(model, messages, max_tokens, temperature)
+                        logger.info("Groq [%s] fallback succeeded.", model)
+                        return result
+                    except Exception as exc:  # pylint: disable=broad-except
+                        last_err = exc
+                        logger.warning("Groq [%s] fallback attempt %d failed: %s", model, attempt, exc)
+                        if attempt < 2:
+                            time.sleep(RETRY_DELAY)
 
         raise RuntimeError(
-            f"All Gemini models ({PRIMARY_MODEL}, {FALLBACK_MODEL}) failed after retries. "
-            "Check GEMINI_API_KEY at https://aistudio.google.com/apikey — "
-            "must be created in AI Studio, not Google Cloud Console."
+            f"All AI providers failed. Last error: {last_err}\n"
+            "Pollinations.ai is the primary (no key needed). "
+            "Optionally set GROQ_API_KEY for a Groq fallback."
         )
 
 
