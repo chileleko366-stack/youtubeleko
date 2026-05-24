@@ -1,8 +1,8 @@
 """
-AI Client using Groq's OpenAI-compatible endpoint.
-Primary model   : openai/gpt-oss-120b  (via https://api.groq.com/openai/v1)
-Fallback model  : llama-3.3-70b-versatile
-Fallback model 2: llama-3.1-8b-instant  (higher TPM, lower token cost)
+AI Client using Google Gemini's OpenAI-compatible endpoint.
+Primary model   : gemini-2.0-flash  (1,500 req/day free, 4M TPM — no daily token cap issues)
+Fallback model  : gemini-1.5-flash
+Fallback model 2: gemini-1.5-flash-8b
 """
 
 import logging
@@ -21,10 +21,10 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-GROQ_BASE_URL    = "https://api.groq.com/openai/v1"
-PRIMARY_MODEL    = "openai/gpt-oss-120b"
-FALLBACK_MODEL   = "llama-3.3-70b-versatile"
-FALLBACK_MODEL_2 = "llama-3.1-8b-instant"
+GEMINI_BASE_URL  = "https://generativelanguage.googleapis.com/v1beta/openai/"
+PRIMARY_MODEL    = "gemini-2.0-flash"
+FALLBACK_MODEL   = "gemini-1.5-flash"
+FALLBACK_MODEL_2 = "gemini-1.5-flash-8b"
 
 MAX_RETRIES = 3
 RETRY_DELAY = 2.0
@@ -32,20 +32,20 @@ RETRY_DELAY = 2.0
 
 class AIClient:
     """
-    LLM client backed by Groq's OpenAI-compatible API.
-    Tries PRIMARY_MODEL first; falls back to FALLBACK_MODEL on rate-limit or error.
+    LLM client backed by Google Gemini's OpenAI-compatible API.
+    Tries PRIMARY_MODEL first; falls back through FALLBACK_MODEL and FALLBACK_MODEL_2.
     """
 
     def __init__(self):
-        api_key = os.environ.get("GROQ_API_KEY")
+        api_key = os.environ.get("GEMINI_API_KEY")
         if not api_key:
             raise RuntimeError(
-                "GROQ_API_KEY is not set. "
-                "Add it to your .env file or GitHub Secrets."
+                "GEMINI_API_KEY is not set. "
+                "Get a free key at https://aistudio.google.com/apikey and add it to GitHub Secrets."
             )
-        self._client = OpenAI(api_key=api_key, base_url=GROQ_BASE_URL)
+        self._client = OpenAI(api_key=api_key, base_url=GEMINI_BASE_URL)
         logger.info(
-            "Groq client ready (primary=%s, fallback=%s, fallback2=%s).",
+            "Gemini client ready (primary=%s, fallback=%s, fallback2=%s).",
             PRIMARY_MODEL, FALLBACK_MODEL, FALLBACK_MODEL_2,
         )
 
@@ -74,7 +74,7 @@ class AIClient:
         temperature: float = 0.7,
     ) -> str:
         """
-        Generate text. Tries PRIMARY_MODEL with retries, then FALLBACK_MODEL.
+        Generate text. Tries PRIMARY_MODEL with retries, then fallbacks.
 
         Raises:
             RuntimeError: when all attempts are exhausted.
@@ -82,28 +82,28 @@ class AIClient:
         for model in (PRIMARY_MODEL, FALLBACK_MODEL, FALLBACK_MODEL_2):
             for attempt in range(1, MAX_RETRIES + 1):
                 try:
-                    logger.info("Groq [%s] attempt %d/%d — %.60s…", model, attempt, MAX_RETRIES, prompt)
+                    logger.info("Gemini [%s] attempt %d/%d — %.60s…", model, attempt, MAX_RETRIES, prompt)
                     result = self._call(model, prompt, system_prompt, max_tokens, temperature)
-                    logger.info("Groq [%s] succeeded on attempt %d.", model, attempt)
+                    logger.info("Gemini [%s] succeeded on attempt %d.", model, attempt)
                     return result
                 except RateLimitError as exc:
                     wait = RETRY_DELAY * attempt
-                    logger.warning("Groq [%s] rate limit (attempt %d) — waiting %.0fs: %s", model, attempt, wait, exc)
+                    logger.warning("Gemini [%s] rate limit (attempt %d) — waiting %.0fs: %s", model, attempt, wait, exc)
                     if attempt < MAX_RETRIES:
                         time.sleep(wait)
                 except APIStatusError as exc:
-                    logger.warning("Groq [%s] API error on attempt %d: %s", model, attempt, exc)
+                    logger.warning("Gemini [%s] API error on attempt %d: %s", model, attempt, exc)
                     if attempt < MAX_RETRIES:
                         time.sleep(RETRY_DELAY)
                 except Exception as exc:  # pylint: disable=broad-except
-                    logger.warning("Groq [%s] unexpected error on attempt %d: %s", model, attempt, exc)
+                    logger.warning("Gemini [%s] unexpected error on attempt %d: %s", model, attempt, exc)
                     if attempt < MAX_RETRIES:
                         time.sleep(RETRY_DELAY)
-            logger.warning("Groq [%s] exhausted — trying fallback.", model)
+            logger.warning("Gemini [%s] exhausted — trying fallback.", model)
 
         raise RuntimeError(
-            f"All Groq models ({PRIMARY_MODEL}, {FALLBACK_MODEL}, {FALLBACK_MODEL_2}) "
-            "failed after retries. Check GROQ_API_KEY and https://console.groq.com for quota status."
+            f"All Gemini models ({PRIMARY_MODEL}, {FALLBACK_MODEL}, {FALLBACK_MODEL_2}) "
+            "failed after retries. Check GEMINI_API_KEY at https://aistudio.google.com/apikey"
         )
 
 
