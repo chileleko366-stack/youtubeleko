@@ -142,7 +142,7 @@ jobs:
               pass
           else:
               send_message(
-                  f"🔧 *Auto-Fix Applied*\n"
+                  f"\U0001f527 *Auto-Fix Applied*\n"
                   f"Claude diagnosed and fixed the nightly pipeline failure.\n"
                   f"Commit: `{msg}`\n"
                   f"Check GitHub Actions to confirm the next run succeeds."
