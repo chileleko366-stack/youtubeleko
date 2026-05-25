@@ -613,10 +613,18 @@ def _upload_manifest(channel_id: str, manifest: Dict[str, Any], date_str: str) -
 # Main
 # ---------------------------------------------------------------------------
 
+def _write_github_output(key: str, value: str) -> None:
+    output_file = os.environ.get("GITHUB_OUTPUT")
+    if output_file:
+        with open(output_file, "a", encoding="utf-8") as fh:
+            fh.write(f"{key}={value}\n")
+
+
 def main():
     _init_cloudinary()
     date_str = date.today().isoformat()
     results = {}
+    providers_used: set = set()
 
     for channel_id, config_file in CHANNEL_CONFIG_FILES.items():
         try:
@@ -626,17 +634,20 @@ def main():
             channel_config["_channel_id"] = channel_id
 
             topics = _download_topics(channel_id, date_str)
-            # Use the first (best) topic
             topic = topics[0]
             logger.info("[%s] Using topic: %s", channel_id, topic["title"])
 
             manifest = generate_complete_manifest(topic, channel_config)
             url = _upload_manifest(channel_id, manifest, date_str)
             results[channel_id] = {"status": "ok", "url": url, "title": topic["title"]}
+            if get_client().last_provider:
+                providers_used.add(get_client().last_provider)
 
         except Exception as exc:  # pylint: disable=broad-except
             logger.error("Script generation failed for %s: %s", channel_id, exc, exc_info=True)
             results[channel_id] = {"status": "error", "error": str(exc)}
+
+    provider_str = ", ".join(sorted(providers_used)) if providers_used else "unknown"
 
     print("\n=== SCRIPT GENERATION SUMMARY ===")
     for ch_id, data in results.items():
@@ -644,6 +655,9 @@ def main():
             print(f"[{ch_id}] OK – '{data['title']}' → {data['url']}")
         else:
             print(f"[{ch_id}] ERROR: {data['error']}")
+    print(f"\nAI provider(s) used: {provider_str}")
+
+    _write_github_output("ai_provider", provider_str)
 
     failed = [k for k, v in results.items() if v["status"] == "error"]
     if failed:

@@ -173,25 +173,37 @@ def upload_topics_to_cloudinary(channel_id: str, topics: List[Dict], date_str: s
     return url
 
 
+def _write_github_output(key: str, value: str) -> None:
+    output_file = os.environ.get("GITHUB_OUTPUT")
+    if output_file:
+        with open(output_file, "a", encoding="utf-8") as fh:
+            fh.write(f"{key}={value}\n")
+
+
 def main():
     """Generate topics for all 5 channels and upload to Cloudinary."""
     _init_cloudinary()
     date_str = date.today().isoformat()
     results = {}
+    providers_used: set = set()
 
     channel_ids = list(CHANNEL_CONFIG_FILES.keys())
     for i, channel_id in enumerate(channel_ids):
         if i > 0:
-            time.sleep(6)  # stay within Gemini's 15 RPM free tier between channels
+            time.sleep(6)  # pace requests to stay within free-tier RPM limits
         try:
             logger.info("Processing channel: %s", channel_id)
             config = load_channel_config(channel_id)
             topics = generate_topics_for_channel(config)
             url = upload_topics_to_cloudinary(channel_id, topics, date_str)
             results[channel_id] = {"status": "ok", "url": url, "topics": topics}
+            if get_client().last_provider:
+                providers_used.add(get_client().last_provider)
         except Exception as exc:  # pylint: disable=broad-except
             logger.error("Failed to generate topics for %s: %s", channel_id, exc, exc_info=True)
             results[channel_id] = {"status": "error", "error": str(exc)}
+
+    provider_str = ", ".join(sorted(providers_used)) if providers_used else "unknown"
 
     # Print summary
     print("\n=== TOPIC GENERATION SUMMARY ===")
@@ -202,6 +214,10 @@ def main():
             print(f"[{ch_id}] OK → {titles}")
         else:
             print(f"[{ch_id}] ERROR: {data['error']}")
+    print(f"\nAI provider(s) used: {provider_str}")
+
+    # Expose for GitHub Actions Telegram notification step
+    _write_github_output("ai_provider", provider_str)
 
     failed = [k for k, v in results.items() if v["status"] == "error"]
     if failed:

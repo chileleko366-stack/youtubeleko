@@ -1,13 +1,22 @@
 """
-AI Client — tries multiple free providers in order until one succeeds.
+AI Client — tries EVERY free provider in priority order until one succeeds.
 
-Provider priority (use whichever key is set):
-  1. Groq        — GROQ_API_KEY    (free at console.groq.com, 200K tokens/day)
-  2. OpenRouter  — OPENROUTER_KEY  (free at openrouter.ai, 200 req/day free models)
-  3. Pollinations — no key needed   (https://text.pollinations.ai, attempted last)
+Provider priority (add keys to GitHub Secrets — all are free, no credit card):
+  1. Groq         — GROQ_API_KEY                                     200K TPD  console.groq.com
+  2. Cerebras     — CEREBRAS_API_KEY                                   1M TPD  cloud.cerebras.ai
+  3. SambaNova    — SAMBANOVA_API_KEY                               generous  cloud.sambanova.ai
+  4. Gemini       — GEMINI_API_KEY (from aistudio.google.com only!)   1M TPD  aistudio.google.com
+  5. GitHub       — GITHUB_TOKEN (auto-set in Actions, no secret!)   150 RPD  models.inference.ai.azure.com
+  6. Together AI  — TOGETHER_API_KEY                                 limited  api.together.xyz
+  7. OpenRouter   — OPENROUTER_KEY                                   limited  openrouter.ai
+  8. Cloudflare   — CLOUDFLARE_API_TOKEN + CLOUDFLARE_ACCOUNT_ID    10K TPD  ai.cloudflare.com
+  9. Pollinations — no key needed                                  unlimited  text.pollinations.ai (last resort)
 
-Set at least ONE key in GitHub Secrets. Groq is recommended — the pipeline
-uses ~120K tokens/day total (under the 200K free limit) when run once per day.
+IMPORTANT for Gemini: key must come from aistudio.google.com (not Google Cloud Console).
+GCP project keys have free_tier_requests=0 and will 429 immediately.
+
+Recommended: set GROQ_API_KEY + CEREBRAS_API_KEY in GitHub Secrets.
+That alone gives 1.2M tokens/day with no credit card.
 """
 
 import logging
@@ -30,86 +39,180 @@ logger = logging.getLogger(__name__)
 MAX_RETRIES = 3
 RETRY_DELAY = 5.0
 
+# ---------------------------------------------------------------------------
+# Provider definitions — all OpenAI-compatible except Cloudflare + Pollinations
+# ---------------------------------------------------------------------------
+
+_OPENAI_COMPAT_PROVIDERS = [
+    {
+        "name": "Groq",
+        "env_key": "GROQ_API_KEY",
+        "base_url": "https://api.groq.com/openai/v1",
+        "models": ["llama-3.3-70b-versatile", "llama-3.1-70b-versatile"],
+    },
+    {
+        "name": "Cerebras",
+        "env_key": "CEREBRAS_API_KEY",
+        "base_url": "https://api.cerebras.ai/v1",
+        "models": ["llama-3.3-70b", "llama3.1-70b"],
+    },
+    {
+        "name": "SambaNova",
+        "env_key": "SAMBANOVA_API_KEY",
+        "base_url": "https://api.sambanova.ai/v1",
+        "models": ["Meta-Llama-3.3-70B-Instruct", "Qwen2.5-72B-Instruct"],
+    },
+    {
+        # MUST use an AI Studio key (aistudio.google.com) — GCP project keys return limit=0
+        "name": "Gemini",
+        "env_key": "GEMINI_API_KEY",
+        "base_url": "https://generativelanguage.googleapis.com/v1beta/openai/",
+        "models": ["gemini-2.0-flash-lite", "gemini-2.0-flash"],
+    },
+    {
+        # GITHUB_TOKEN is automatically injected in GitHub Actions — no secret needed
+        "name": "GitHub Models",
+        "env_key": "GITHUB_TOKEN",
+        "base_url": "https://models.inference.ai.azure.com",
+        "models": ["meta-llama/Llama-3.3-70B-Instruct", "gpt-4o-mini"],
+        "extra_headers": {"X-GitHub-Api-Version": "2022-11-28"},
+    },
+    {
+        "name": "Together AI",
+        "env_key": "TOGETHER_API_KEY",
+        "base_url": "https://api.together.xyz/v1",
+        "models": [
+            "meta-llama/Llama-3.3-70B-Instruct-Turbo-Free",
+            "mistralai/Mistral-7B-Instruct-v0.3",
+        ],
+    },
+    {
+        "name": "OpenRouter",
+        "env_key": "OPENROUTER_KEY",
+        "base_url": "https://openrouter.ai/api/v1",
+        "models": [
+            "meta-llama/llama-3.3-70b-instruct:free",
+            "deepseek/deepseek-chat-v3-0324:free",
+            "google/gemma-3-27b-it:free",
+        ],
+        "extra_headers": {"HTTP-Referer": "https://github.com/youtubeleko"},
+    },
+]
 
 # ---------------------------------------------------------------------------
-# Groq
+# Generic OpenAI-compatible generate (used by all providers above)
 # ---------------------------------------------------------------------------
 
-GROQ_BASE_URL = "https://api.groq.com/openai/v1"
-GROQ_MODELS   = ("openai/gpt-oss-120b", "llama-3.3-70b-versatile")
-
-
-def _groq_generate(client, messages: list, max_tokens: int, temperature: float) -> str:
-    for model in GROQ_MODELS:
+def _openai_compat_generate(
+    client,
+    models: list,
+    provider_name: str,
+    messages: list,
+    max_tokens: int,
+    temperature: float,
+) -> str:
+    for model in models:
         for attempt in range(1, MAX_RETRIES + 1):
             try:
-                logger.info("Groq [%s] attempt %d/%d", model, attempt, MAX_RETRIES)
+                logger.info("%s [%s] attempt %d/%d", provider_name, model, attempt, MAX_RETRIES)
                 resp = client.chat.completions.create(
-                    model=model, messages=messages,
-                    max_tokens=max_tokens, temperature=temperature,
+                    model=model,
+                    messages=messages,
+                    max_tokens=max_tokens,
+                    temperature=temperature,
                 )
                 content = resp.choices[0].message.content
                 if not content or not content.strip():
                     raise ValueError("Empty response")
-                logger.info("Groq [%s] succeeded.", model)
+                logger.info("%s [%s] succeeded.", provider_name, model)
                 return content
             except Exception as exc:
-                wait = _parse_groq_retry(exc) or (RETRY_DELAY * attempt)
-                logger.warning("Groq [%s] attempt %d failed (%.0fs wait): %s", model, attempt, wait, exc)
+                wait = _parse_retry_after(exc) or (RETRY_DELAY * attempt)
+                logger.warning(
+                    "%s [%s] attempt %d failed (%.0fs wait): %s",
+                    provider_name, model, attempt, wait, exc,
+                )
                 if attempt < MAX_RETRIES:
                     time.sleep(wait)
-    raise RuntimeError("Groq exhausted all models and retries")
+    raise RuntimeError(f"{provider_name}: exhausted all models and retries")
 
 
-def _parse_groq_retry(exc: Exception) -> Optional[float]:
+def _parse_retry_after(exc: Exception) -> Optional[float]:
+    """Extract a wait time from rate-limit error messages across providers."""
     try:
-        match = re.search(r"try again in (\d+)m(\d+\.?\d*)s", str(exc))
-        if match:
-            return min(int(match.group(1)) * 60 + float(match.group(2)) + 2.0, 300.0)
-    except Exception:  # pylint: disable=broad-except
+        text = str(exc)
+        # Groq: "try again in 1m30.5s"
+        m = re.search(r"try again in (\d+)m(\d+\.?\d*)s", text)
+        if m:
+            return min(int(m.group(1)) * 60 + float(m.group(2)) + 2.0, 300.0)
+        # Gemini / generic: "Please retry in 1.2s" or "retry after 60 seconds"
+        m = re.search(r"(?:retry|wait)[^\d]*?(\d+\.?\d*)\s*s", text, re.IGNORECASE)
+        if m:
+            return min(float(m.group(1)) + 2.0, 300.0)
+    except Exception:
         pass
     return None
 
 
 # ---------------------------------------------------------------------------
-# OpenRouter (free models)
+# Cloudflare Workers AI (custom HTTP — not OpenAI-compatible)
 # ---------------------------------------------------------------------------
 
-OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1"
-OPENROUTER_MODELS   = (
-    "meta-llama/llama-3.3-70b-instruct:free",
-    "deepseek/deepseek-chat-v3-0324:free",
-    "google/gemma-3-27b-it:free",
-)
+_CF_MODELS = [
+    "@cf/meta/llama-3.3-70b-instruct-fp8-fast",
+    "@cf/meta/llama-3.1-8b-instruct",
+]
 
 
-def _openrouter_generate(client, messages: list, max_tokens: int, temperature: float) -> str:
-    for model in OPENROUTER_MODELS:
+def _cloudflare_generate(
+    api_token: str,
+    account_id: str,
+    messages: list,
+    max_tokens: int,
+    temperature: float,
+) -> str:
+    for model in _CF_MODELS:
         for attempt in range(1, MAX_RETRIES + 1):
             try:
-                logger.info("OpenRouter [%s] attempt %d/%d", model, attempt, MAX_RETRIES)
-                resp = client.chat.completions.create(
-                    model=model, messages=messages,
-                    max_tokens=max_tokens, temperature=temperature,
-                    extra_headers={"HTTP-Referer": "https://github.com/youtubeleko"},
+                logger.info("Cloudflare [%s] attempt %d/%d", model, attempt, MAX_RETRIES)
+                url = (
+                    f"https://api.cloudflare.com/client/v4/accounts/"
+                    f"{account_id}/ai/run/{model}"
                 )
-                content = resp.choices[0].message.content
-                if not content or not content.strip():
+                resp = _http.post(
+                    url,
+                    json={
+                        "messages": messages,
+                        "max_tokens": max_tokens,
+                        "temperature": temperature,
+                    },
+                    headers={
+                        "Authorization": f"Bearer {api_token}",
+                        "Content-Type": "application/json",
+                    },
+                    timeout=120,
+                )
+                resp.raise_for_status()
+                data = resp.json()
+                if not data.get("success"):
+                    raise ValueError(f"API error: {data.get('errors')}")
+                content = data["result"]["response"].strip()
+                if not content:
                     raise ValueError("Empty response")
-                logger.info("OpenRouter [%s] succeeded.", model)
+                logger.info("Cloudflare [%s] succeeded.", model)
                 return content
             except Exception as exc:
-                logger.warning("OpenRouter [%s] attempt %d failed: %s", model, attempt, exc)
+                logger.warning("Cloudflare [%s] attempt %d failed: %s", model, attempt, exc)
                 if attempt < MAX_RETRIES:
                     time.sleep(RETRY_DELAY * attempt)
-    raise RuntimeError("OpenRouter exhausted all models and retries")
+    raise RuntimeError("Cloudflare: exhausted all models and retries")
 
 
 # ---------------------------------------------------------------------------
-# Pollinations (no key needed)
+# Pollinations (no key needed — always available as last resort)
 # ---------------------------------------------------------------------------
 
-POLLINATIONS_URL = "https://text.pollinations.ai/"
+_POLLINATIONS_URL = "https://text.pollinations.ai/"
 
 
 def _pollinations_generate(messages: list, temperature: float) -> str:
@@ -117,7 +220,7 @@ def _pollinations_generate(messages: list, temperature: float) -> str:
         try:
             logger.info("Pollinations attempt %d/%d", attempt, MAX_RETRIES)
             resp = _http.post(
-                POLLINATIONS_URL,
+                _POLLINATIONS_URL,
                 json={
                     "messages": messages,
                     "model": "openai",
@@ -144,46 +247,76 @@ def _pollinations_generate(messages: list, temperature: float) -> str:
             logger.warning("Pollinations attempt %d failed: %s", attempt, exc)
             if attempt < MAX_RETRIES:
                 time.sleep(RETRY_DELAY * attempt)
-    raise RuntimeError("Pollinations exhausted all retries")
+    raise RuntimeError("Pollinations: exhausted all retries")
 
 
 # ---------------------------------------------------------------------------
-# AIClient
+# AIClient — multi-provider with automatic fallback
 # ---------------------------------------------------------------------------
+
+def _make_openai_fn(client, models, name):
+    """Factory to avoid lambda closure issues in loops."""
+    return lambda msgs, tok, tmp: _openai_compat_generate(client, models, name, msgs, tok, tmp)
+
+
+def _make_cf_fn(token, account):
+    return lambda msgs, tok, tmp: _cloudflare_generate(token, account, msgs, tok, tmp)
+
 
 class AIClient:
     """
-    Multi-provider LLM client. Tries configured providers in priority order.
-    Requires at least one of: GROQ_API_KEY or OPENROUTER_KEY.
-    Falls back to Pollinations (no key) as last resort.
+    Tries every configured free AI provider in priority order.
+    Exposes `last_provider` (str) after each successful generate() call.
+
+    At minimum Pollinations works with zero configuration — but add
+    GROQ_API_KEY and CEREBRAS_API_KEY to GitHub Secrets for 1.2M+ tokens/day free.
     """
 
     def __init__(self):
         from openai import OpenAI  # pylint: disable=import-outside-toplevel
 
-        self._groq = None
-        self._openrouter = None
+        self._provider_fns: list = []
+        self.last_provider: Optional[str] = None
 
-        groq_key = os.environ.get("GROQ_API_KEY")
-        if groq_key:
-            self._groq = OpenAI(api_key=groq_key, base_url=GROQ_BASE_URL)
-            logger.info("Provider: Groq enabled (primary).")
+        # OpenAI-compatible providers (priority 1–7)
+        for cfg in _OPENAI_COMPAT_PROVIDERS:
+            key = os.environ.get(cfg["env_key"])
+            if not key:
+                continue
+            kwargs = {"api_key": key, "base_url": cfg["base_url"]}
+            extra = cfg.get("extra_headers", {})
+            if extra:
+                kwargs["default_headers"] = extra
+            client = OpenAI(**kwargs)
+            name = cfg["name"]
+            self._provider_fns.append((name, _make_openai_fn(client, cfg["models"], name)))
+            logger.info("Provider enabled: %s", name)
 
-        or_key = os.environ.get("OPENROUTER_KEY")
-        if or_key:
-            self._openrouter = OpenAI(api_key=or_key, base_url=OPENROUTER_BASE_URL)
-            logger.info("Provider: OpenRouter enabled.")
+        # Cloudflare (priority 8)
+        cf_token = os.environ.get("CLOUDFLARE_API_TOKEN")
+        cf_account = os.environ.get("CLOUDFLARE_ACCOUNT_ID")
+        if cf_token and cf_account:
+            self._provider_fns.append(("Cloudflare", _make_cf_fn(cf_token, cf_account)))
+            logger.info("Provider enabled: Cloudflare")
 
-        logger.info(
-            "Provider: Pollinations enabled (no key, last resort)."
-        )
+        # Pollinations — always last resort (priority 9)
+        self._provider_fns.append((
+            "Pollinations",
+            lambda msgs, tok, tmp: _pollinations_generate(msgs, tmp),
+        ))
+        logger.info("Provider enabled: Pollinations (last resort, no key required)")
 
-        if not self._groq and not self._openrouter:
+        named = [n for n, _ in self._provider_fns if n != "Pollinations"]
+        if not named:
             logger.warning(
-                "No AI API key set. Using Pollinations only — set GROQ_API_KEY "
-                "in GitHub Secrets for more reliable generation. "
-                "Free key at console.groq.com (no credit card needed)."
+                "No API keys configured — using Pollinations only (unreliable). "
+                "Add GROQ_API_KEY to GitHub Secrets for free at console.groq.com, "
+                "or CEREBRAS_API_KEY at cloud.cerebras.ai. Both are no-credit-card free."
             )
+
+    @property
+    def active_provider_names(self) -> list:
+        return [n for n, _ in self._provider_fns]
 
     def generate(
         self,
@@ -198,29 +331,19 @@ class AIClient:
         messages.append({"role": "user", "content": prompt})
 
         errors = []
-
-        if self._groq:
+        for name, fn in self._provider_fns:
             try:
-                return _groq_generate(self._groq, messages, max_tokens, temperature)
+                result = fn(messages, max_tokens, temperature)
+                self.last_provider = name
+                return result
             except Exception as exc:
-                errors.append(f"Groq: {exc}")
-                logger.warning("Groq failed, trying next provider: %s", exc)
-
-        if self._openrouter:
-            try:
-                return _openrouter_generate(self._openrouter, messages, max_tokens, temperature)
-            except Exception as exc:
-                errors.append(f"OpenRouter: {exc}")
-                logger.warning("OpenRouter failed, trying next provider: %s", exc)
-
-        try:
-            return _pollinations_generate(messages, temperature)
-        except Exception as exc:
-            errors.append(f"Pollinations: {exc}")
+                errors.append(f"{name}: {exc}")
+                logger.warning("Provider %s failed, trying next: %s", name, exc)
 
         raise RuntimeError(
-            "All AI providers failed:\n" + "\n".join(f"  - {e}" for e in errors) + "\n"
-            "Set GROQ_API_KEY in GitHub Secrets (free at console.groq.com)."
+            "ALL AI providers failed:\n"
+            + "\n".join(f"  - {e}" for e in errors)
+            + "\n\nFix: add GROQ_API_KEY + CEREBRAS_API_KEY to GitHub Secrets (both free, no CC)."
         )
 
 
