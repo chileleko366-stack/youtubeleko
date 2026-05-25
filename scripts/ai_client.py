@@ -3,20 +3,18 @@ AI Client — tries EVERY free provider in priority order until one succeeds.
 
 Provider priority (add keys to GitHub Secrets — all are free, no credit card):
   1. Groq         — GROQ_API_KEY                                     200K TPD  console.groq.com
-  2. Cerebras     — CEREBRAS_API_KEY                                   1M TPD  cloud.cerebras.ai
-  3. SambaNova    — SAMBANOVA_API_KEY                               generous  cloud.sambanova.ai
-  4. Gemini       — GEMINI_API_KEY (from aistudio.google.com only!)   1M TPD  aistudio.google.com
-  5. GitHub       — GITHUB_TOKEN (auto-set in Actions, no secret!)   150 RPD  models.inference.ai.azure.com
-  6. Together AI  — TOGETHER_API_KEY                                 limited  api.together.xyz
-  7. OpenRouter   — OPENROUTER_KEY                                   limited  openrouter.ai
-  8. Cloudflare   — CLOUDFLARE_API_TOKEN + CLOUDFLARE_ACCOUNT_ID    10K TPD  ai.cloudflare.com
-  9. Pollinations — no key needed                                  unlimited  text.pollinations.ai (last resort)
+  2. Cerebras     — CEREBRAS_API_KEY                                  free tier cloud.cerebras.ai
+  3. SambaNova    — SAMBANOVA_API_KEY                               generous   cloud.sambanova.ai
+  4. Gemini       — GEMINI_API_KEY (from aistudio.google.com ONLY!)  1M TPD    aistudio.google.com
+  5. GitHub       — GITHUB_TOKEN (auto-set in Actions, no secret!)   150 RPD   models.inference.ai.azure.com
+  6. OpenRouter   — OPENROUTER_KEY                                   limited   openrouter.ai
+  7. Cloudflare   — CLOUDFLARE_API_TOKEN + CLOUDFLARE_ACCOUNT_ID    10K TPD   ai.cloudflare.com
+  8. Pollinations — no key needed                                  unlimited  text.pollinations.ai (last resort)
 
-IMPORTANT for Gemini: key must come from aistudio.google.com (not Google Cloud Console).
-GCP project keys have free_tier_requests=0 and will 429 immediately.
+IMPORTANT for Gemini: key MUST come from aistudio.google.com, NOT Google Cloud Console.
+GCP project keys have free_tier_requests=0 and will 429 on every call.
 
-Recommended: set GROQ_API_KEY + CEREBRAS_API_KEY in GitHub Secrets.
-That alone gives 1.2M tokens/day with no credit card.
+Recommended minimum: GROQ_API_KEY + CEREBRAS_API_KEY in GitHub Secrets (both free, no CC).
 """
 
 import logging
@@ -51,10 +49,11 @@ _OPENAI_COMPAT_PROVIDERS = [
         "models": ["llama-3.3-70b-versatile", "llama-3.1-70b-versatile"],
     },
     {
+        # Free tier only includes 8B — 70B models return 404 without a paid plan
         "name": "Cerebras",
         "env_key": "CEREBRAS_API_KEY",
         "base_url": "https://api.cerebras.ai/v1",
-        "models": ["llama-3.3-70b", "llama3.1-70b"],
+        "models": ["llama3.1-8b"],
     },
     {
         "name": "SambaNova",
@@ -78,15 +77,6 @@ _OPENAI_COMPAT_PROVIDERS = [
         "extra_headers": {"X-GitHub-Api-Version": "2022-11-28"},
     },
     {
-        "name": "Together AI",
-        "env_key": "TOGETHER_API_KEY",
-        "base_url": "https://api.together.xyz/v1",
-        "models": [
-            "meta-llama/Llama-3.3-70B-Instruct-Turbo-Free",
-            "mistralai/Mistral-7B-Instruct-v0.3",
-        ],
-    },
-    {
         "name": "OpenRouter",
         "env_key": "OPENROUTER_KEY",
         "base_url": "https://openrouter.ai/api/v1",
@@ -102,6 +92,25 @@ _OPENAI_COMPAT_PROVIDERS = [
 # ---------------------------------------------------------------------------
 # Generic OpenAI-compatible generate (used by all providers above)
 # ---------------------------------------------------------------------------
+
+def _is_permanent_error(exc: Exception) -> bool:
+    """Return True if retrying this error is pointless."""
+    text = str(exc)
+    return any(s in text for s in [
+        "limit: 0",                # Gemini GCP key — free tier disabled at account level
+        "free_tier_requests",      # same Gemini error, different message fragment
+        "Credit limit exceeded",   # Together AI / paid services
+        "credit_limit",
+        "model_not_found",         # 404 wrong model name — skip immediately
+        "does not exist or you do not have access",
+    ])
+
+
+def _is_connection_error(exc: Exception) -> bool:
+    """Return True for network-level failures where retrying quickly won't help."""
+    text = str(exc)
+    return "Connection error" in text or "ConnectionError" in type(exc).__name__
+
 
 def _openai_compat_generate(
     client,
@@ -127,6 +136,12 @@ def _openai_compat_generate(
                 logger.info("%s [%s] succeeded.", provider_name, model)
                 return content
             except Exception as exc:
+                if _is_permanent_error(exc):
+                    logger.warning("%s [%s]: permanent error, skipping immediately: %s", provider_name, model, exc)
+                    break  # try next model (or exhaust)
+                if _is_connection_error(exc):
+                    logger.warning("%s [%s]: connection error, not retrying: %s", provider_name, model, exc)
+                    break  # try next model immediately
                 wait = _parse_retry_after(exc) or (RETRY_DELAY * attempt)
                 logger.warning(
                     "%s [%s] attempt %d failed (%.0fs wait): %s",
@@ -219,6 +234,7 @@ def _pollinations_generate(messages: list, temperature: float) -> str:
     for attempt in range(1, MAX_RETRIES + 1):
         try:
             logger.info("Pollinations attempt %d/%d", attempt, MAX_RETRIES)
+            # No Referer/Origin headers — those trigger "authenticated user" deprecation mode
             resp = _http.post(
                 _POLLINATIONS_URL,
                 json={
@@ -229,11 +245,7 @@ def _pollinations_generate(messages: list, temperature: float) -> str:
                     "temperature": temperature,
                     "jsonMode": True,
                 },
-                headers={
-                    "Content-Type": "application/json",
-                    "Referer": "https://pollinations.ai",
-                    "Origin": "https://pollinations.ai",
-                },
+                headers={"Content-Type": "application/json"},
                 timeout=120,
             )
             resp.raise_for_status()
@@ -241,6 +253,8 @@ def _pollinations_generate(messages: list, temperature: float) -> str:
             logger.info("Pollinations raw response (first 300 chars): %r", content[:300])
             if not content:
                 raise ValueError("Empty response")
+            if content.startswith("⚠️") or "being deprecated" in content:
+                raise ValueError("Pollinations returned deprecation notice instead of JSON")
             logger.info("Pollinations succeeded.")
             return content
         except Exception as exc:
