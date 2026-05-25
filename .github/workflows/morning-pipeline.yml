@@ -333,14 +333,24 @@ jobs:
           python - <<'PYEOF'
           import os
           from scripts.telegram_notify import send_message
+          from scripts.email_notify import notify_pipeline_success, notify_pipeline_failure
           date_str = os.environ.get("MANIFEST_DATE", "unknown")
+          status = os.environ.get("JOB_STATUS", "unknown")
           send_message(
               f"*Morning Pipeline COMPLETED* — manifests `{date_str}`\n"
               "Check individual step logs for per-channel status."
           )
+          if status == "success":
+              notify_pipeline_success("Morning — Video Production", date_str)
+          else:
+              notify_pipeline_failure("Morning — Video Production", date_str)
           PYEOF
         env:
           MANIFEST_DATE: ${{ env.MANIFEST_DATE }}
+          JOB_STATUS: ${{ job.status }}
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          GMAIL_USER: ${{ secrets.GMAIL_USER }}
+          GMAIL_APP_PASSWORD: ${{ secrets.GMAIL_APP_PASSWORD }}
+          GMAIL_TO: ${{ secrets.GMAIL_TO }}
         continue-on-error: true
