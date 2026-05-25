@@ -124,6 +124,7 @@ def _pollinations_generate(messages: list, temperature: float) -> str:
                     "private": True,
                     "seed": int(time.time()) % 99999,
                     "temperature": temperature,
+                    "jsonMode": True,
                 },
                 headers={
                     "Content-Type": "application/json",
@@ -134,6 +135,7 @@ def _pollinations_generate(messages: list, temperature: float) -> str:
             )
             resp.raise_for_status()
             content = resp.text.strip()
+            logger.info("Pollinations raw response (first 300 chars): %r", content[:300])
             if not content:
                 raise ValueError("Empty response")
             logger.info("Pollinations succeeded.")
