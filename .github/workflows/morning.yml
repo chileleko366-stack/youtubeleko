@@ -2,7 +2,6 @@ name: Morning — Produce & Upload Videos
 
 on:
   schedule:
-    # Runs at 04:00 UTC daily — assembles videos from last night's manifests
     - cron: "0 4 * * *"
   workflow_dispatch:
     inputs:
@@ -28,38 +27,30 @@ jobs:
 
     steps:
 
-      # ── 1. Checkout ────────────────────────────────────────────────────────
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      # ── 2. Resolve date & channel list ─────────────────────────────────────
       - name: Resolve manifest date and channels
         run: |
           INPUT_DATE="${{ inputs.manifest_date }}"
           INPUT_CHAN="${{ inputs.channels }}"
-
           if [ -n "$INPUT_DATE" ]; then
             DATE="$INPUT_DATE"
           else
-            DATE=$(date -u -d 'yesterday' '+%Y-%m-%d' 2>/dev/null \
-              || date -u -v-1d '+%Y-%m-%d')
+            DATE=$(date -u -d 'yesterday' '+%Y-%m-%d' 2>/dev/null || date -u -v-1d '+%Y-%m-%d')
           fi
-
           [ -z "$INPUT_CHAN" ] && INPUT_CHAN="all"
-
           echo "MANIFEST_DATE=$DATE" >> "$GITHUB_ENV"
-          echo "CHANNELS=$INPUT_CHAN"  >> "$GITHUB_ENV"
+          echo "CHANNELS=$INPUT_CHAN" >> "$GITHUB_ENV"
           echo "Manifest date : $DATE"
           echo "Channels      : $INPUT_CHAN"
 
-      # ── 3. System deps ─────────────────────────────────────────────────────
       - name: Install FFmpeg
         run: |
           sudo apt-get update -qq
           sudo apt-get install -y ffmpeg
           ffmpeg -version | head -1
 
-      # ubuntu-latest ships with Node 20 — no setup-node step needed.
       - name: Check Node.js version
         run: node --version && npm --version
 
@@ -76,7 +67,6 @@ jobs:
       - name: Install Python dependencies
         run: pip install -r requirements.txt
 
-      # ── 4. Notify start ────────────────────────────────────────────────────
       - name: Notify start
         run: |
           python - <<'PYEOF'
@@ -95,7 +85,6 @@ jobs:
           TELEGRAM_CHAT_ID:   ${{ secrets.TELEGRAM_CHAT_ID }}
         continue-on-error: true
 
-      # ── 5. Assemble all channels ───────────────────────────────────────────
       - name: Assemble all channels
         run: |
           python - <<'PYEOF'
@@ -129,11 +118,9 @@ jobs:
 
           for ch_id in channels:
               t0 = time.time()
-              sep = "=" * 60
-              print(f"\n{sep}\n  {ch_id.upper()} | {date}\n{sep}")
+              print(f"\n{'='*60}\n  {ch_id.upper()} | {date}\n{'='*60}")
               step = {}
 
-              # Fetch manifest from Cloudinary
               url = (
                   f"https://res.cloudinary.com/{cloud}/raw/upload"
                   f"/automation/manifests/{date}/{ch_id}.json"
@@ -148,7 +135,6 @@ jobs:
               title    = manifest.get("metadata", {}).get("title", "Untitled")
               print(f"  Title: {title}")
 
-              # Stock footage
               try:
                   fetch_all_footage(manifest)
                   step["footage"] = "ok"
@@ -156,7 +142,6 @@ jobs:
                   step["footage"] = f"warn: {exc}"
                   print(f"  [footage] {exc}")
 
-              # Voiceover
               try:
                   asyncio.run(generate_all_voiceovers(manifest))
                   step["voiceover"] = "ok"
@@ -164,7 +149,6 @@ jobs:
                   step["voiceover"] = f"warn: {exc}"
                   print(f"  [voiceover] {exc}")
 
-              # Thumbnail
               thumb = f"temp/thumbnails/{ch_id}_thumbnail.png"
               try:
                   cfg = manifest.get("channel_config", {})
@@ -179,7 +163,6 @@ jobs:
                   thumb = None
                   print(f"  [thumbnail] {exc}")
 
-              # Motion graphics (Remotion render)
               try:
                   render_all_lines(manifest)
                   step["render"] = "ok"
@@ -187,17 +170,14 @@ jobs:
                   step["render"] = f"warn: {exc}"
                   print(f"  [render] {exc}")
 
-              # FFmpeg assembly
               out = f"temp/final/{ch_id}_final.mp4"
               if not assemble_video(manifest, None, [], [], out):
                   step["assembly"] = "FAILED"
-                  results[ch_id] = {"ok": False, "title": title, "step": step,
-                                    "reason": "assembly failed"}
+                  results[ch_id] = {"ok": False, "title": title, "step": step, "reason": "assembly failed"}
                   send_message(f"*{ch_id.upper()}* assembly FAILED\nTitle: {title}")
                   continue
               step["assembly"] = "ok"
 
-              # Google Drive backup
               drive_id = None
               try:
                   drive_id = backup_to_drive(out, ch_id, date)
@@ -208,7 +188,6 @@ jobs:
 
               drive_url = f"https://drive.google.com/file/d/{drive_id}" if drive_id else None
 
-              # YouTube upload
               if is_youtube_configured(ch_id):
                   vid_id = upload_video(out, thumb, manifest)
                   if vid_id:
@@ -221,31 +200,25 @@ jobs:
                       step["youtube"] = "upload failed"
                       send_message(
                           f"*{ch_id.upper()}* assembled — YouTube upload failed\n"
-                          f"Title: {title}\n"
-                          + (f"Drive: {drive_url}" if drive_url else "")
+                          f"Title: {title}\n" + (f"Drive: {drive_url}" if drive_url else "")
                       )
               else:
                   step["youtube"] = "not configured"
                   send_message(
                       f"*{ch_id.upper()}* saved to Drive (YouTube not configured)\n"
-                      f"Title: {title}\n"
-                      + (f"Drive: {drive_url}" if drive_url else "Drive backup failed")
+                      f"Title: {title}\n" + (f"Drive: {drive_url}" if drive_url else "Drive backup failed")
                   )
 
               elapsed = round(time.time() - t0)
-              results[ch_id] = {"ok": True, "title": title,
-                                "step": step, "elapsed_s": elapsed}
+              results[ch_id] = {"ok": True, "title": title, "step": step, "elapsed_s": elapsed}
               print(f"  Done in {elapsed}s")
 
-          # Summary table
-          sep = "=" * 60
-          print(f"\n{sep}\n  SUMMARY\n{sep}")
+          print(f"\n{'='*60}\n  SUMMARY\n{'='*60}")
           any_failed = False
           for ch_id, data in results.items():
               if data.get("ok"):
                   yt = data["step"].get("youtube", "?")
-                  print(f"  OK   {ch_id}: '{data['title']}' "
-                        f"({data.get('elapsed_s','?')}s) youtube={yt}")
+                  print(f"  OK   {ch_id}: '{data['title']}' ({data.get('elapsed_s','?')}s) youtube={yt}")
               else:
                   any_failed = True
                   print(f"  FAIL {ch_id}: {data.get('reason', 'unknown')}")
@@ -275,7 +248,6 @@ jobs:
           TELEGRAM_CHAT_ID:           ${{ secrets.TELEGRAM_CHAT_ID }}
         continue-on-error: true
 
-      # ── 6. Cloudinary cleanup ──────────────────────────────────────────────
       - name: Cleanup old Cloudinary assets
         run: python scripts/cleanup_cloudinary.py
         env:
@@ -284,7 +256,6 @@ jobs:
           CLOUDINARY_API_SECRET: ${{ secrets.CLOUDINARY_API_SECRET }}
         continue-on-error: true
 
-      # ── 7. Final summary (always runs) ─────────────────────────────────────
       - name: Send final summary
         if: always()
         run: |
@@ -292,7 +263,7 @@ jobs:
           import json, os
           from pathlib import Path
           from scripts.telegram_notify import send_message
-          from scripts.email_notify   import notify_pipeline_success, notify_pipeline_failure
+          from scripts.email_notify import notify_pipeline_success, notify_pipeline_failure
 
           date         = os.environ.get("MANIFEST_DATE", "unknown")
           results_path = Path("/tmp/assembly_results.json")
@@ -310,12 +281,11 @@ jobs:
               lines    = []
               for ch_id, data in results.items():
                   if data.get("ok"):
-                      yt = data["step"].get("youtube", "?")
+                      yt  = data["step"].get("youtube", "?")
                       tag = f"youtu.be/{yt}" if yt and len(yt) == 11 else yt
                       lines.append(f"  ✅ {ch_id.upper()}: {data['title'][:45]} ({tag})")
                   else:
                       lines.append(f"  ❌ {ch_id.upper()}: {data.get('reason','failed')}")
-
               icon = "✅" if ok_count == total else "⚠️"
               send_message(
                   f"{icon} *Morning Assembly Complete* — `{date}`\n"
