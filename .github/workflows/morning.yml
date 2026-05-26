@@ -59,15 +59,9 @@ jobs:
           sudo apt-get install -y ffmpeg
           ffmpeg -version | head -1
 
-      # setup-node@v4 auto-detects remotion/package.json and tries to cache npm
-      # even without cache: npm — that fails because package-lock.json doesn't
-      # exist. Node IS successfully installed; only the cache step errors.
-      # continue-on-error keeps the job alive so Python steps always run.
-      - name: Set up Node.js 20
-        uses: actions/setup-node@v4
-        with:
-          node-version: "20"
-        continue-on-error: true
+      # ubuntu-latest ships with Node 20 — no setup-node step needed.
+      - name: Check Node.js version
+        run: node --version && npm --version
 
       - name: Install Remotion dependencies
         run: npm install --prefix remotion
