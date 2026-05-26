@@ -1,0 +1,715 @@
+name: Morning Pipeline — Production & Upload
+
+on:
+  schedule:
+    # Run at 04:00 UTC every day (picks up nightly manifests, publishes at 18:00 UTC)
+    - cron: "0 4 * * *"
+  workflow_dispatch:
+    inputs:
+      channels:
+        description: "Comma-separated channel IDs to run (e.g. ch1,ch3) or 'all'"
+        required: false
+        default: "all"
+
+env:
+  PYTHONPATH: ${{ github.workspace }}
+
+# ──────────────────────────────────────────────────────────────────────────────
+# CH1 — DOPAMINE LOOP
+# ──────────────────────────────────────────────────────────────────────────────
+jobs:
+  produce-ch1:
+    name: CH1 — Dopamine Loop
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    continue-on-error: true
+    permissions:
+      contents: read
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Set up Node.js 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: remotion/package.json
+
+      - name: Install FFmpeg
+        run: sudo apt-get update -qq && sudo apt-get install -y ffmpeg
+
+      - name: Install Python dependencies
+        run: pip install -r requirements.txt
+
+      - name: Install Remotion dependencies
+        run: cd remotion && npm ci
+
+      - name: Download today's manifest from Cloudinary
+        run: |
+          python - <<'PYEOF'
+          import cloudinary, cloudinary.api, os, urllib.request
+          from datetime import date
+          from pathlib import Path
+          cloudinary.config(
+              cloud_name=os.environ["CLOUDINARY_CLOUD_NAME"],
+              api_key=os.environ["CLOUDINARY_API_KEY"],
+              api_secret=os.environ["CLOUDINARY_API_SECRET"],
+              secure=True,
+          )
+          date_str = date.today().isoformat()
+          public_id = f"automation/manifests/{date_str}/ch1"
+          result = cloudinary.api.resource(public_id, resource_type="raw")
+          Path("temp/manifests").mkdir(parents=True, exist_ok=True)
+          urllib.request.urlretrieve(result["secure_url"], "temp/manifests/ch1.json")
+          print(f"Manifest downloaded: ch1 / {date_str}")
+          PYEOF
+        env:
+          CLOUDINARY_CLOUD_NAME: ${{ secrets.CLOUDINARY_CLOUD_NAME }}
+          CLOUDINARY_API_KEY: ${{ secrets.CLOUDINARY_API_KEY }}
+          CLOUDINARY_API_SECRET: ${{ secrets.CLOUDINARY_API_SECRET }}
+
+      - name: Notify CH1 production start
+        run: |
+          python - <<'PYEOF'
+          from scripts.telegram_notify import send_message
+          from datetime import date
+          send_message(f"*Morning Pipeline* — CH1 Dopamine Loop production started ({date.today().isoformat()})")
+          PYEOF
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+        continue-on-error: true
+
+      - name: Fetch stock footage
+        run: python scripts/stock_footage.py temp/manifests/ch1.json
+        env:
+          PEXELS_API_KEY: ${{ secrets.PEXELS_API_KEY }}
+
+      - name: Generate voiceover
+        run: python scripts/generate_voiceover.py temp/manifests/ch1.json
+
+      - name: Generate thumbnail
+        run: python scripts/generate_thumbnail.py temp/manifests/ch1.json
+
+      - name: Render motion graphics
+        run: python scripts/render_mographs.py temp/manifests/ch1.json
+
+      - name: Assemble video
+        run: python scripts/assemble_video.py temp/manifests/ch1.json
+
+      - name: Upload to YouTube
+        run: python scripts/upload_youtube.py temp/manifests/ch1.json
+        env:
+          YOUTUBE_CLIENT_ID: ${{ secrets.YOUTUBE_CLIENT_ID }}
+          YOUTUBE_CLIENT_SECRET: ${{ secrets.YOUTUBE_CLIENT_SECRET }}
+          YOUTUBE_REFRESH_TOKEN_CH1: ${{ secrets.YOUTUBE_REFRESH_TOKEN_CH1 }}
+
+      - name: Back up to Google Drive
+        run: python scripts/upload_drive.py temp/manifests/ch1.json
+        env:
+          GOOGLE_DRIVE_CREDENTIALS: ${{ secrets.GOOGLE_DRIVE_CREDENTIALS }}
+        continue-on-error: true
+
+      - name: Notify CH1 complete
+        if: always()
+        run: |
+          STATUS="${{ job.status }}"
+          python - <<PYEOF
+          import os
+          from datetime import date
+          from scripts.telegram_notify import send_message
+          from scripts.email_notify import notify_pipeline_success, notify_pipeline_failure
+          status = "${STATUS}"
+          icon = "✅" if status == "success" else "❌"
+          date_str = date.today().isoformat()
+          send_message(f"{icon} *Morning Pipeline* — CH1 Dopamine Loop {status} ({date_str})")
+          if status == "success":
+              notify_pipeline_success("Morning — CH1", date_str, "")
+          else:
+              notify_pipeline_failure("Morning — CH1", date_str, f"Job status: {status}")
+          PYEOF
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          GMAIL_USER: ${{ secrets.GMAIL_USER }}
+          GMAIL_APP_PASSWORD: ${{ secrets.GMAIL_APP_PASSWORD }}
+          GMAIL_TO: ${{ secrets.GMAIL_TO }}
+        continue-on-error: true
+
+# ──────────────────────────────────────────────────────────────────────────────
+# CH2 — FINANCEFICTION
+# ──────────────────────────────────────────────────────────────────────────────
+  produce-ch2:
+    name: CH2 — FinanceFiction
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    continue-on-error: true
+    permissions:
+      contents: read
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Set up Node.js 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: remotion/package.json
+
+      - name: Install FFmpeg
+        run: sudo apt-get update -qq && sudo apt-get install -y ffmpeg
+
+      - name: Install Python dependencies
+        run: pip install -r requirements.txt
+
+      - name: Install Remotion dependencies
+        run: cd remotion && npm ci
+
+      - name: Download today's manifest from Cloudinary
+        run: |
+          python - <<'PYEOF'
+          import cloudinary, cloudinary.api, os, urllib.request
+          from datetime import date
+          from pathlib import Path
+          cloudinary.config(
+              cloud_name=os.environ["CLOUDINARY_CLOUD_NAME"],
+              api_key=os.environ["CLOUDINARY_API_KEY"],
+              api_secret=os.environ["CLOUDINARY_API_SECRET"],
+              secure=True,
+          )
+          date_str = date.today().isoformat()
+          public_id = f"automation/manifests/{date_str}/ch2"
+          result = cloudinary.api.resource(public_id, resource_type="raw")
+          Path("temp/manifests").mkdir(parents=True, exist_ok=True)
+          urllib.request.urlretrieve(result["secure_url"], "temp/manifests/ch2.json")
+          print(f"Manifest downloaded: ch2 / {date_str}")
+          PYEOF
+        env:
+          CLOUDINARY_CLOUD_NAME: ${{ secrets.CLOUDINARY_CLOUD_NAME }}
+          CLOUDINARY_API_KEY: ${{ secrets.CLOUDINARY_API_KEY }}
+          CLOUDINARY_API_SECRET: ${{ secrets.CLOUDINARY_API_SECRET }}
+
+      - name: Notify CH2 production start
+        run: |
+          python - <<'PYEOF'
+          from scripts.telegram_notify import send_message
+          from datetime import date
+          send_message(f"*Morning Pipeline* — CH2 FinanceFiction production started ({date.today().isoformat()})")
+          PYEOF
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+        continue-on-error: true
+
+      - name: Fetch stock footage
+        run: python scripts/stock_footage.py temp/manifests/ch2.json
+        env:
+          PEXELS_API_KEY: ${{ secrets.PEXELS_API_KEY }}
+
+      - name: Generate voiceover
+        run: python scripts/generate_voiceover.py temp/manifests/ch2.json
+
+      - name: Generate thumbnail
+        run: python scripts/generate_thumbnail.py temp/manifests/ch2.json
+
+      - name: Render motion graphics
+        run: python scripts/render_mographs.py temp/manifests/ch2.json
+
+      - name: Assemble video
+        run: python scripts/assemble_video.py temp/manifests/ch2.json
+
+      - name: Upload to YouTube
+        run: python scripts/upload_youtube.py temp/manifests/ch2.json
+        env:
+          YOUTUBE_CLIENT_ID: ${{ secrets.YOUTUBE_CLIENT_ID }}
+          YOUTUBE_CLIENT_SECRET: ${{ secrets.YOUTUBE_CLIENT_SECRET }}
+          YOUTUBE_REFRESH_TOKEN_CH2: ${{ secrets.YOUTUBE_REFRESH_TOKEN_CH2 }}
+
+      - name: Back up to Google Drive
+        run: python scripts/upload_drive.py temp/manifests/ch2.json
+        env:
+          GOOGLE_DRIVE_CREDENTIALS: ${{ secrets.GOOGLE_DRIVE_CREDENTIALS }}
+        continue-on-error: true
+
+      - name: Notify CH2 complete
+        if: always()
+        run: |
+          STATUS="${{ job.status }}"
+          python - <<PYEOF
+          import os
+          from datetime import date
+          from scripts.telegram_notify import send_message
+          from scripts.email_notify import notify_pipeline_success, notify_pipeline_failure
+          status = "${STATUS}"
+          icon = "✅" if status == "success" else "❌"
+          date_str = date.today().isoformat()
+          send_message(f"{icon} *Morning Pipeline* — CH2 FinanceFiction {status} ({date_str})")
+          if status == "success":
+              notify_pipeline_success("Morning — CH2", date_str, "")
+          else:
+              notify_pipeline_failure("Morning — CH2", date_str, f"Job status: {status}")
+          PYEOF
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          GMAIL_USER: ${{ secrets.GMAIL_USER }}
+          GMAIL_APP_PASSWORD: ${{ secrets.GMAIL_APP_PASSWORD }}
+          GMAIL_TO: ${{ secrets.GMAIL_TO }}
+        continue-on-error: true
+
+# ──────────────────────────────────────────────────────────────────────────────
+# CH3 — REDACTED
+# ──────────────────────────────────────────────────────────────────────────────
+  produce-ch3:
+    name: CH3 — Redacted
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    continue-on-error: true
+    permissions:
+      contents: read
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Set up Node.js 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: remotion/package.json
+
+      - name: Install FFmpeg
+        run: sudo apt-get update -qq && sudo apt-get install -y ffmpeg
+
+      - name: Install Python dependencies
+        run: pip install -r requirements.txt
+
+      - name: Install Remotion dependencies
+        run: cd remotion && npm ci
+
+      - name: Download today's manifest from Cloudinary
+        run: |
+          python - <<'PYEOF'
+          import cloudinary, cloudinary.api, os, urllib.request
+          from datetime import date
+          from pathlib import Path
+          cloudinary.config(
+              cloud_name=os.environ["CLOUDINARY_CLOUD_NAME"],
+              api_key=os.environ["CLOUDINARY_API_KEY"],
+              api_secret=os.environ["CLOUDINARY_API_SECRET"],
+              secure=True,
+          )
+          date_str = date.today().isoformat()
+          public_id = f"automation/manifests/{date_str}/ch3"
+          result = cloudinary.api.resource(public_id, resource_type="raw")
+          Path("temp/manifests").mkdir(parents=True, exist_ok=True)
+          urllib.request.urlretrieve(result["secure_url"], "temp/manifests/ch3.json")
+          print(f"Manifest downloaded: ch3 / {date_str}")
+          PYEOF
+        env:
+          CLOUDINARY_CLOUD_NAME: ${{ secrets.CLOUDINARY_CLOUD_NAME }}
+          CLOUDINARY_API_KEY: ${{ secrets.CLOUDINARY_API_KEY }}
+          CLOUDINARY_API_SECRET: ${{ secrets.CLOUDINARY_API_SECRET }}
+
+      - name: Notify CH3 production start
+        run: |
+          python - <<'PYEOF'
+          from scripts.telegram_notify import send_message
+          from datetime import date
+          send_message(f"*Morning Pipeline* — CH3 Redacted production started ({date.today().isoformat()})")
+          PYEOF
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+        continue-on-error: true
+
+      - name: Fetch stock footage
+        run: python scripts/stock_footage.py temp/manifests/ch3.json
+        env:
+          PEXELS_API_KEY: ${{ secrets.PEXELS_API_KEY }}
+
+      - name: Generate voiceover
+        run: python scripts/generate_voiceover.py temp/manifests/ch3.json
+
+      - name: Generate thumbnail
+        run: python scripts/generate_thumbnail.py temp/manifests/ch3.json
+
+      - name: Render motion graphics
+        run: python scripts/render_mographs.py temp/manifests/ch3.json
+
+      - name: Assemble video
+        run: python scripts/assemble_video.py temp/manifests/ch3.json
+
+      - name: Upload to YouTube
+        run: python scripts/upload_youtube.py temp/manifests/ch3.json
+        env:
+          YOUTUBE_CLIENT_ID: ${{ secrets.YOUTUBE_CLIENT_ID }}
+          YOUTUBE_CLIENT_SECRET: ${{ secrets.YOUTUBE_CLIENT_SECRET }}
+          YOUTUBE_REFRESH_TOKEN_CH3: ${{ secrets.YOUTUBE_REFRESH_TOKEN_CH3 }}
+
+      - name: Back up to Google Drive
+        run: python scripts/upload_drive.py temp/manifests/ch3.json
+        env:
+          GOOGLE_DRIVE_CREDENTIALS: ${{ secrets.GOOGLE_DRIVE_CREDENTIALS }}
+        continue-on-error: true
+
+      - name: Notify CH3 complete
+        if: always()
+        run: |
+          STATUS="${{ job.status }}"
+          python - <<PYEOF
+          import os
+          from datetime import date
+          from scripts.telegram_notify import send_message
+          from scripts.email_notify import notify_pipeline_success, notify_pipeline_failure
+          status = "${STATUS}"
+          icon = "✅" if status == "success" else "❌"
+          date_str = date.today().isoformat()
+          send_message(f"{icon} *Morning Pipeline* — CH3 Redacted {status} ({date_str})")
+          if status == "success":
+              notify_pipeline_success("Morning — CH3", date_str, "")
+          else:
+              notify_pipeline_failure("Morning — CH3", date_str, f"Job status: {status}")
+          PYEOF
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          GMAIL_USER: ${{ secrets.GMAIL_USER }}
+          GMAIL_APP_PASSWORD: ${{ secrets.GMAIL_APP_PASSWORD }}
+          GMAIL_TO: ${{ secrets.GMAIL_TO }}
+        continue-on-error: true
+
+# ──────────────────────────────────────────────────────────────────────────────
+# CH4 — THE GREY MATTER
+# ──────────────────────────────────────────────────────────────────────────────
+  produce-ch4:
+    name: CH4 — The Grey Matter
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    continue-on-error: true
+    permissions:
+      contents: read
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Set up Node.js 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: remotion/package.json
+
+      - name: Install FFmpeg
+        run: sudo apt-get update -qq && sudo apt-get install -y ffmpeg
+
+      - name: Install Python dependencies
+        run: pip install -r requirements.txt
+
+      - name: Install Remotion dependencies
+        run: cd remotion && npm ci
+
+      - name: Download today's manifest from Cloudinary
+        run: |
+          python - <<'PYEOF'
+          import cloudinary, cloudinary.api, os, urllib.request
+          from datetime import date
+          from pathlib import Path
+          cloudinary.config(
+              cloud_name=os.environ["CLOUDINARY_CLOUD_NAME"],
+              api_key=os.environ["CLOUDINARY_API_KEY"],
+              api_secret=os.environ["CLOUDINARY_API_SECRET"],
+              secure=True,
+          )
+          date_str = date.today().isoformat()
+          public_id = f"automation/manifests/{date_str}/ch4"
+          result = cloudinary.api.resource(public_id, resource_type="raw")
+          Path("temp/manifests").mkdir(parents=True, exist_ok=True)
+          urllib.request.urlretrieve(result["secure_url"], "temp/manifests/ch4.json")
+          print(f"Manifest downloaded: ch4 / {date_str}")
+          PYEOF
+        env:
+          CLOUDINARY_CLOUD_NAME: ${{ secrets.CLOUDINARY_CLOUD_NAME }}
+          CLOUDINARY_API_KEY: ${{ secrets.CLOUDINARY_API_KEY }}
+          CLOUDINARY_API_SECRET: ${{ secrets.CLOUDINARY_API_SECRET }}
+
+      - name: Notify CH4 production start
+        run: |
+          python - <<'PYEOF'
+          from scripts.telegram_notify import send_message
+          from datetime import date
+          send_message(f"*Morning Pipeline* — CH4 The Grey Matter production started ({date.today().isoformat()})")
+          PYEOF
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+        continue-on-error: true
+
+      - name: Fetch stock footage
+        run: python scripts/stock_footage.py temp/manifests/ch4.json
+        env:
+          PEXELS_API_KEY: ${{ secrets.PEXELS_API_KEY }}
+
+      - name: Generate voiceover
+        run: python scripts/generate_voiceover.py temp/manifests/ch4.json
+
+      - name: Generate thumbnail
+        run: python scripts/generate_thumbnail.py temp/manifests/ch4.json
+
+      - name: Render motion graphics
+        run: python scripts/render_mographs.py temp/manifests/ch4.json
+
+      - name: Assemble video
+        run: python scripts/assemble_video.py temp/manifests/ch4.json
+
+      - name: Upload to YouTube
+        run: python scripts/upload_youtube.py temp/manifests/ch4.json
+        env:
+          YOUTUBE_CLIENT_ID: ${{ secrets.YOUTUBE_CLIENT_ID }}
+          YOUTUBE_CLIENT_SECRET: ${{ secrets.YOUTUBE_CLIENT_SECRET }}
+          YOUTUBE_REFRESH_TOKEN_CH4: ${{ secrets.YOUTUBE_REFRESH_TOKEN_CH4 }}
+
+      - name: Back up to Google Drive
+        run: python scripts/upload_drive.py temp/manifests/ch4.json
+        env:
+          GOOGLE_DRIVE_CREDENTIALS: ${{ secrets.GOOGLE_DRIVE_CREDENTIALS }}
+        continue-on-error: true
+
+      - name: Notify CH4 complete
+        if: always()
+        run: |
+          STATUS="${{ job.status }}"
+          python - <<PYEOF
+          import os
+          from datetime import date
+          from scripts.telegram_notify import send_message
+          from scripts.email_notify import notify_pipeline_success, notify_pipeline_failure
+          status = "${STATUS}"
+          icon = "✅" if status == "success" else "❌"
+          date_str = date.today().isoformat()
+          send_message(f"{icon} *Morning Pipeline* — CH4 The Grey Matter {status} ({date_str})")
+          if status == "success":
+              notify_pipeline_success("Morning — CH4", date_str, "")
+          else:
+              notify_pipeline_failure("Morning — CH4", date_str, f"Job status: {status}")
+          PYEOF
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          GMAIL_USER: ${{ secrets.GMAIL_USER }}
+          GMAIL_APP_PASSWORD: ${{ secrets.GMAIL_APP_PASSWORD }}
+          GMAIL_TO: ${{ secrets.GMAIL_TO }}
+        continue-on-error: true
+
+# ──────────────────────────────────────────────────────────────────────────────
+# CH5 — THE QUIET RECORD
+# ──────────────────────────────────────────────────────────────────────────────
+  produce-ch5:
+    name: CH5 — The Quiet Record
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    continue-on-error: true
+    permissions:
+      contents: read
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Set up Node.js 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: remotion/package.json
+
+      - name: Install FFmpeg
+        run: sudo apt-get update -qq && sudo apt-get install -y ffmpeg
+
+      - name: Install Python dependencies
+        run: pip install -r requirements.txt
+
+      - name: Install Remotion dependencies
+        run: cd remotion && npm ci
+
+      - name: Download today's manifest from Cloudinary
+        run: |
+          python - <<'PYEOF'
+          import cloudinary, cloudinary.api, os, urllib.request
+          from datetime import date
+          from pathlib import Path
+          cloudinary.config(
+              cloud_name=os.environ["CLOUDINARY_CLOUD_NAME"],
+              api_key=os.environ["CLOUDINARY_API_KEY"],
+              api_secret=os.environ["CLOUDINARY_API_SECRET"],
+              secure=True,
+          )
+          date_str = date.today().isoformat()
+          public_id = f"automation/manifests/{date_str}/ch5"
+          result = cloudinary.api.resource(public_id, resource_type="raw")
+          Path("temp/manifests").mkdir(parents=True, exist_ok=True)
+          urllib.request.urlretrieve(result["secure_url"], "temp/manifests/ch5.json")
+          print(f"Manifest downloaded: ch5 / {date_str}")
+          PYEOF
+        env:
+          CLOUDINARY_CLOUD_NAME: ${{ secrets.CLOUDINARY_CLOUD_NAME }}
+          CLOUDINARY_API_KEY: ${{ secrets.CLOUDINARY_API_KEY }}
+          CLOUDINARY_API_SECRET: ${{ secrets.CLOUDINARY_API_SECRET }}
+
+      - name: Notify CH5 production start
+        run: |
+          python - <<'PYEOF'
+          from scripts.telegram_notify import send_message
+          from datetime import date
+          send_message(f"*Morning Pipeline* — CH5 The Quiet Record production started ({date.today().isoformat()})")
+          PYEOF
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+        continue-on-error: true
+
+      - name: Fetch stock footage
+        run: python scripts/stock_footage.py temp/manifests/ch5.json
+        env:
+          PEXELS_API_KEY: ${{ secrets.PEXELS_API_KEY }}
+
+      - name: Generate voiceover
+        run: python scripts/generate_voiceover.py temp/manifests/ch5.json
+
+      - name: Generate thumbnail
+        run: python scripts/generate_thumbnail.py temp/manifests/ch5.json
+
+      - name: Render motion graphics
+        run: python scripts/render_mographs.py temp/manifests/ch5.json
+
+      - name: Assemble video
+        run: python scripts/assemble_video.py temp/manifests/ch5.json
+
+      - name: Upload to YouTube
+        run: python scripts/upload_youtube.py temp/manifests/ch5.json
+        env:
+          YOUTUBE_CLIENT_ID: ${{ secrets.YOUTUBE_CLIENT_ID }}
+          YOUTUBE_CLIENT_SECRET: ${{ secrets.YOUTUBE_CLIENT_SECRET }}
+          YOUTUBE_REFRESH_TOKEN_CH5: ${{ secrets.YOUTUBE_REFRESH_TOKEN_CH5 }}
+
+      - name: Back up to Google Drive
+        run: python scripts/upload_drive.py temp/manifests/ch5.json
+        env:
+          GOOGLE_DRIVE_CREDENTIALS: ${{ secrets.GOOGLE_DRIVE_CREDENTIALS }}
+        continue-on-error: true
+
+      - name: Notify CH5 complete
+        if: always()
+        run: |
+          STATUS="${{ job.status }}"
+          python - <<PYEOF
+          import os
+          from datetime import date
+          from scripts.telegram_notify import send_message
+          from scripts.email_notify import notify_pipeline_success, notify_pipeline_failure
+          status = "${STATUS}"
+          icon = "✅" if status == "success" else "❌"
+          date_str = date.today().isoformat()
+          send_message(f"{icon} *Morning Pipeline* — CH5 The Quiet Record {status} ({date_str})")
+          if status == "success":
+              notify_pipeline_success("Morning — CH5", date_str, "")
+          else:
+              notify_pipeline_failure("Morning — CH5", date_str, f"Job status: {status}")
+          PYEOF
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          GMAIL_USER: ${{ secrets.GMAIL_USER }}
+          GMAIL_APP_PASSWORD: ${{ secrets.GMAIL_APP_PASSWORD }}
+          GMAIL_TO: ${{ secrets.GMAIL_TO }}
+        continue-on-error: true
+
+# ──────────────────────────────────────────────────────────────────────────────
+# DAILY SUMMARY & CLEANUP
+# ──────────────────────────────────────────────────────────────────────────────
+  daily-summary:
+    name: Daily Summary & Cloudinary Cleanup
+    runs-on: ubuntu-latest
+    needs: [produce-ch1, produce-ch2, produce-ch3, produce-ch4, produce-ch5]
+    if: always()
+    timeout-minutes: 15
+    permissions:
+      contents: read
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Install Python dependencies
+        run: pip install -r requirements.txt
+
+      - name: Send daily summary
+        run: |
+          python - <<'PYEOF'
+          from scripts.telegram_notify import send_message
+          from scripts.email_notify import notify_pipeline_success
+          from datetime import date
+          date_str = date.today().isoformat()
+          send_message(
+              f"📊 *Daily Summary* — Morning pipeline complete for {date_str}. "
+              f"Videos scheduled to publish at 18:00 UTC."
+          )
+          notify_pipeline_success("Morning — Daily Summary", date_str, "")
+          PYEOF
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          GMAIL_USER: ${{ secrets.GMAIL_USER }}
+          GMAIL_APP_PASSWORD: ${{ secrets.GMAIL_APP_PASSWORD }}
+          GMAIL_TO: ${{ secrets.GMAIL_TO }}
+        continue-on-error: true
+
+      - name: Cleanup old Cloudinary assets
+        run: python scripts/cleanup_cloudinary.py
+        env:
+          CLOUDINARY_CLOUD_NAME: ${{ secrets.CLOUDINARY_CLOUD_NAME }}
+          CLOUDINARY_API_KEY: ${{ secrets.CLOUDINARY_API_KEY }}
+          CLOUDINARY_API_SECRET: ${{ secrets.CLOUDINARY_API_SECRET }}
+        continue-on-error: true
