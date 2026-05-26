@@ -8,9 +8,13 @@ from datetime import date
 from typing import Dict, List, Optional
 
 import requests
-from dotenv import load_dotenv
 
-load_dotenv()
+try:
+    from dotenv import load_dotenv
+    load_dotenv()
+except ImportError:
+    pass  # dotenv not required in GitHub Actions — env vars come from the env: block
+
 logger = logging.getLogger(__name__)
 
 TELEGRAM_API_BASE = "https://api.telegram.org/bot"
