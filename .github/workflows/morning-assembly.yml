@@ -60,11 +60,9 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: "20"
-          cache: npm
-          cache-dependency-path: remotion/package-lock.json
 
       - name: Install Remotion dependencies
-        run: npm ci --prefix remotion --prefer-offline
+        run: npm install --prefix remotion
 
       - name: Set up Python 3.11
         uses: actions/setup-python@v5
@@ -81,7 +79,7 @@ jobs:
           python - <<'PYEOF'
           import os
           from scripts.telegram_notify import send_message
-          date    = os.environ["MANIFEST_DATE"]
+          date     = os.environ["MANIFEST_DATE"]
           channels = os.environ["CHANNELS"]
           send_message(
               f"*Morning Assembly Started*\n"
@@ -299,7 +297,7 @@ jobs:
           from scripts.telegram_notify import send_message
           from scripts.email_notify import notify_pipeline_success, notify_pipeline_failure
 
-          date    = os.environ.get("MANIFEST_DATE", "unknown")
+          date         = os.environ.get("MANIFEST_DATE", "unknown")
           results_path = Path("/tmp/assembly_results.json")
 
           if not results_path.exists():
@@ -321,8 +319,8 @@ jobs:
                   else:
                       lines.append(f"  ❌ {ch_id.upper()}: {data.get('reason', 'failed')}")
 
-              body    = "\n".join(lines)
-              icon    = "✅" if ok_count == total else "⚠️"
+              body = "\n".join(lines)
+              icon = "✅" if ok_count == total else "⚠️"
               send_message(
                   f"{icon} *Morning Assembly Complete* — `{date}`\n"
                   f"{ok_count}/{total} channels OK\n\n{body}"
