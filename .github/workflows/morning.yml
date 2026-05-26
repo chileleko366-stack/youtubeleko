@@ -38,7 +38,6 @@ jobs:
           INPUT_DATE="${{ inputs.manifest_date }}"
           INPUT_CHAN="${{ inputs.channels }}"
 
-          # Default date: yesterday (nightly ran last night under that date)
           if [ -n "$INPUT_DATE" ]; then
             DATE="$INPUT_DATE"
           else
@@ -46,7 +45,6 @@ jobs:
               || date -u -v-1d '+%Y-%m-%d')
           fi
 
-          # Default channels: all
           [ -z "$INPUT_CHAN" ] && INPUT_CHAN="all"
 
           echo "MANIFEST_DATE=$DATE" >> "$GITHUB_ENV"
@@ -61,16 +59,19 @@ jobs:
           sudo apt-get install -y ffmpeg
           ffmpeg -version | head -1
 
-      # No cache: npm — remotion/package-lock.json does not exist in this repo.
-      # npm install generates it at runtime; npm ci would fail without it.
+      # setup-node@v4 auto-detects remotion/package.json and tries to cache npm
+      # even without cache: npm — that fails because package-lock.json doesn't
+      # exist. Node IS successfully installed; only the cache step errors.
+      # continue-on-error keeps the job alive so Python steps always run.
       - name: Set up Node.js 20
         uses: actions/setup-node@v4
         with:
           node-version: "20"
+        continue-on-error: true
 
       - name: Install Remotion dependencies
         run: npm install --prefix remotion
-        continue-on-error: true  # Remotion failure must not block the Python steps
+        continue-on-error: true
 
       - name: Set up Python 3.11
         uses: actions/setup-python@v5
