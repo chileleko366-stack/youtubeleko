@@ -21,8 +21,8 @@ load_dotenv()
 logger = logging.getLogger(__name__)
 
 
-def send_email(subject: str, body: str) -> bool:
-    """Send a plain-text email via Gmail SMTP. Returns True on success."""
+def send_email(subject: str, body: str, body_html: str = "") -> bool:
+    """Send an email via Gmail SMTP. Sends HTML if provided, plain text otherwise."""
     sender = os.environ.get("GMAIL_USER")
     password = os.environ.get("GMAIL_APP_PASSWORD")
 
@@ -38,6 +38,8 @@ def send_email(subject: str, body: str) -> bool:
     msg["To"] = recipient
 
     msg.attach(MIMEText(body, "plain"))
+    if body_html:
+        msg.attach(MIMEText(body_html, "html"))
 
     try:
         with smtplib.SMTP_SSL("smtp.gmail.com", 465, timeout=15) as server:

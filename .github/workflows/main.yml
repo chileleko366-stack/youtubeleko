@@ -51,6 +51,10 @@ jobs:
       models: read
     outputs:
       title: ${{ steps.export_result.outputs.title }}
+      duration: ${{ steps.export_result.outputs.duration }}
+      desc_b64: ${{ steps.export_result.outputs.desc_b64 }}
+      tags: ${{ steps.export_result.outputs.tags }}
+      run_url: ${{ steps.export_result.outputs.run_url }}
 
     steps:
       - name: Checkout repository
@@ -110,29 +114,12 @@ jobs:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
 
-      - name: Upload Shorts to Google Drive
-        run: |
-          python - <<'PYEOF'
-          import glob, os, sys
-          from pathlib import Path
-          from datetime import date
-          sys.path.insert(0, ".")
-          from scripts.upload_drive import backup_to_drive
-          date_str = date.today().isoformat()
-          # Find the assembled short
-          videos = sorted(glob.glob("temp/output/ch6_*.mp4"))
-          if not videos:
-              print("No assembled short video found — skipping Drive upload")
-              sys.exit(0)
-          video_path = videos[-1]
-          file_id = backup_to_drive(video_path, "ch6_shorts", date_str)
-          if file_id:
-              print(f"Uploaded to Drive: {Path(video_path).name} (id={file_id})")
-          else:
-              print(f"Drive upload failed for {video_path}")
-          PYEOF
-        env:
-          GOOGLE_DRIVE_CREDENTIALS: ${{ secrets.GOOGLE_DRIVE_CREDENTIALS }}
+      - name: Upload Short as artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ch6-short-${{ github.run_id }}
+          path: temp/output/ch6_*.mp4
+          retention-days: 30
         continue-on-error: true
 
       - name: Export result
@@ -140,18 +127,42 @@ jobs:
         if: always()
         run: |
           python - <<'PYEOF'
-          import json, os
+          import base64, json, os
           from pathlib import Path
+
           title = "unknown"
+          duration = "unknown"
+          desc_b64 = ""
+          tags = ""
+
           try:
               data = json.loads(Path("temp/manifests/ch6_short.json").read_text())
-              title = data.get("topic", {}).get("title", "") or "unknown"
-          except Exception:
-              pass
+              topic    = data.get("topic", {})
+              metadata = data.get("metadata", {})
+              title = metadata.get("title", "") or topic.get("title", "") or "unknown"
+              total_s = int(data.get("total_duration_seconds", 0))
+              duration = f"{total_s}s" if total_s < 60 else f"{total_s // 60}m {total_s % 60}s"
+              description = metadata.get("description", "")
+              desc_b64 = base64.b64encode(description.encode()).decode()
+              tags_list = metadata.get("tags", [])
+              tags = ", ".join(tags_list) if isinstance(tags_list, list) else str(tags_list)
+          except Exception as e:
+              print(f"Manifest read error: {e}")
+
+          run_url = (
+              f"{os.environ.get('GITHUB_SERVER_URL','https://github.com')}/"
+              f"{os.environ.get('GITHUB_REPOSITORY','')}/"
+              f"actions/runs/{os.environ.get('GITHUB_RUN_ID','')}"
+          )
+
           out = os.environ.get("GITHUB_OUTPUT", "")
           if out:
               with open(out, "a") as f:
                   f.write(f"title={title}\n")
+                  f.write(f"duration={duration}\n")
+                  f.write(f"desc_b64={desc_b64}\n")
+                  f.write(f"tags={tags}\n")
+                  f.write(f"run_url={run_url}\n")
           PYEOF
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -169,6 +180,10 @@ jobs:
       models: read
     outputs:
       title: ${{ steps.export_result.outputs.title }}
+      duration: ${{ steps.export_result.outputs.duration }}
+      desc_b64: ${{ steps.export_result.outputs.desc_b64 }}
+      tags: ${{ steps.export_result.outputs.tags }}
+      run_url: ${{ steps.export_result.outputs.run_url }}
 
     steps:
       - name: Checkout repository
@@ -230,10 +245,12 @@ jobs:
       - name: Assemble longform video
         run: python scripts/assemble_video.py temp/manifests/ch6.json
 
-      - name: Upload longform to Google Drive
-        run: python scripts/upload_drive.py temp/manifests/ch6.json
-        env:
-          GOOGLE_DRIVE_CREDENTIALS: ${{ secrets.GOOGLE_DRIVE_CREDENTIALS }}
+      - name: Upload longform as artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ch6-longform-${{ github.run_id }}
+          path: temp/output/ch6_*.mp4
+          retention-days: 30
         continue-on-error: true
 
       - name: Export result
@@ -241,20 +258,42 @@ jobs:
         if: always()
         run: |
           python - <<'PYEOF'
-          import json, os
+          import base64, json, os
           from pathlib import Path
+
           title = "unknown"
+          duration = "unknown"
+          desc_b64 = ""
+          tags = ""
+
           try:
               data = json.loads(Path("temp/manifests/ch6.json").read_text())
-              title = (data.get("metadata", {}).get("title", "")
-                       or data.get("topic", {}).get("title", "")
-                       or "unknown")
-          except Exception:
-              pass
+              topic    = data.get("topic", {})
+              metadata = data.get("metadata", {})
+              title = metadata.get("title", "") or topic.get("title", "") or "unknown"
+              total_s = int(data.get("total_duration_seconds", 0))
+              duration = f"{total_s}s" if total_s < 60 else f"{total_s // 60}m {total_s % 60}s"
+              description = metadata.get("description", "")
+              desc_b64 = base64.b64encode(description.encode()).decode()
+              tags_list = metadata.get("tags", [])
+              tags = ", ".join(tags_list) if isinstance(tags_list, list) else str(tags_list)
+          except Exception as e:
+              print(f"Manifest read error: {e}")
+
+          run_url = (
+              f"{os.environ.get('GITHUB_SERVER_URL','https://github.com')}/"
+              f"{os.environ.get('GITHUB_REPOSITORY','')}/"
+              f"actions/runs/{os.environ.get('GITHUB_RUN_ID','')}"
+          )
+
           out = os.environ.get("GITHUB_OUTPUT", "")
           if out:
               with open(out, "a") as f:
                   f.write(f"title={title}\n")
+                  f.write(f"duration={duration}\n")
+                  f.write(f"desc_b64={desc_b64}\n")
+                  f.write(f"tags={tags}\n")
+                  f.write(f"run_url={run_url}\n")
           PYEOF
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -281,99 +320,157 @@ jobs:
 
       - name: Send summary email
         run: |
-          SHORTS_STATUS="${{ needs.produce-shorts.result }}"
-          SHORTS_TITLE="${{ needs.produce-shorts.outputs.title }}"
-          LONGFORM_STATUS="${{ needs.produce-longform.result }}"
-          LONGFORM_TITLE="${{ needs.produce-longform.outputs.title }}"
-          python - <<PYEOF
-          import os
+          python - <<'PYEOF'
+          import base64, os
           from datetime import date
           from scripts.email_notify import send_email
           from scripts.telegram_notify import send_message
 
           date_str = date.today().isoformat()
-          shorts_status = "${SHORTS_STATUS}"
-          shorts_title = "${SHORTS_TITLE}" or "unknown"
-          longform_status = "${LONGFORM_STATUS}"
-          longform_title = "${LONGFORM_TITLE}" or "not run"
 
-          shorts_ok = shorts_status == "success"
+          shorts_status   = "${{ needs.produce-shorts.result }}"
+          shorts_title    = "${{ needs.produce-shorts.outputs.title }}" or "unknown"
+          shorts_duration = "${{ needs.produce-shorts.outputs.duration }}" or "unknown"
+          shorts_desc_b64 = "${{ needs.produce-shorts.outputs.desc_b64 }}"
+          shorts_tags     = "${{ needs.produce-shorts.outputs.tags }}"
+          shorts_run_url  = "${{ needs.produce-shorts.outputs.run_url }}"
+
+          longform_status   = "${{ needs.produce-longform.result }}"
+          longform_title    = "${{ needs.produce-longform.outputs.title }}" or "not run"
+          longform_duration = "${{ needs.produce-longform.outputs.duration }}" or "unknown"
+          longform_desc_b64 = "${{ needs.produce-longform.outputs.desc_b64 }}"
+          longform_tags     = "${{ needs.produce-longform.outputs.tags }}"
+          longform_run_url  = "${{ needs.produce-longform.outputs.run_url }}"
+
+          def decode_desc(b64_str):
+              if not b64_str:
+                  return ""
+              try:
+                  return base64.b64decode(b64_str).decode("utf-8")
+              except Exception:
+                  return ""
+
+          shorts_desc   = decode_desc(shorts_desc_b64)
+          longform_desc = decode_desc(longform_desc_b64)
+
+          shorts_ok    = shorts_status == "success"
           longform_ran = longform_status not in ("skipped", "")
-          longform_ok = longform_status == "success"
+          longform_ok  = longform_status == "success"
 
-          shorts_icon = "✅" if shorts_ok else "❌"
+          shorts_icon  = "✅" if shorts_ok  else "❌"
           longform_icon = "✅" if longform_ok else ("⏭️" if not longform_ran else "❌")
 
           subject = f"[YoutuBeLeko] CH6 Red Space Facts — {date_str}"
 
-          # Plain text
-          lines = [
+          # ── Plain text ──────────────────────────────────────────────────────
+          txt = [
               f"CH6 Red Space Facts — {date_str}",
               "",
-              f"SHORTS ({shorts_icon}):   {shorts_title}",
-              f"  Status: {shorts_status} — uploaded to Google Drive",
+              f"SHORTS {shorts_icon}",
+              f"  Title:    {shorts_title}",
+              f"  Duration: {shorts_duration}",
+              f"  Status:   {shorts_status}",
           ]
+          if shorts_run_url:
+              txt.append(f"  Download: {shorts_run_url}  (Artifacts tab)")
+          if shorts_desc:
+              txt.append(f"  SEO Description:\n    {shorts_desc}")
+          if shorts_tags:
+              txt.append(f"  Tags: {shorts_tags}")
+          txt.append("")
           if longform_ran:
-              lines.append(f"LONGFORM ({longform_icon}): {longform_title}")
-              lines.append(f"  Status: {longform_status} — uploaded to Google Drive")
+              txt += [
+                  f"LONGFORM {longform_icon}",
+                  f"  Title:    {longform_title}",
+                  f"  Duration: {longform_duration}",
+                  f"  Status:   {longform_status}",
+              ]
+              if longform_run_url:
+                  txt.append(f"  Download: {longform_run_url}  (Artifacts tab)")
+              if longform_desc:
+                  txt.append(f"  SEO Description:\n    {longform_desc}")
+              if longform_tags:
+                  txt.append(f"  Tags: {longform_tags}")
           else:
-              lines.append("LONGFORM: Not scheduled today (runs Fridays)")
+              txt.append("LONGFORM ⏭️  Not scheduled today — runs every Friday")
 
-          body_text = "\n".join(lines)
+          body_text = "\n".join(txt)
 
-          # HTML
-          shorts_row = (
-              f"<tr>"
-              f"<td style='padding:8px;border-bottom:1px solid #eee'><b>Shorts</b></td>"
-              f"<td style='padding:8px;border-bottom:1px solid #eee'>{shorts_icon} <b>{shorts_title}</b></td>"
-              f"<td style='padding:8px;border-bottom:1px solid #eee'>{shorts_status}</td>"
-              f"</tr>"
+          # ── HTML ────────────────────────────────────────────────────────────
+          def video_card(icon, label, vtitle, vduration, vstatus, vrun_url, vdesc, vtags):
+              dl_btn = (
+                  f'<a href="{vrun_url}" style="display:inline-block;margin-top:6px;'
+                  f'padding:8px 16px;background:#ff2222;color:#fff;text-decoration:none;'
+                  f'border-radius:4px;font-weight:bold">⬇ Download Video</a>'
+                  if vrun_url else ""
+              )
+              desc_block = (
+                  f'<p style="margin:8px 0 0;font-size:13px;color:#444">'
+                  f'<b>SEO Description:</b><br>{vdesc}</p>'
+                  if vdesc else ""
+              )
+              tags_block = (
+                  f'<p style="margin:4px 0 0;font-size:12px;color:#666">'
+                  f'<b>Tags:</b> {vtags}</p>'
+                  if vtags else ""
+              )
+              return f"""
+              <div style="border:1px solid #ddd;border-radius:8px;padding:16px;margin-bottom:16px">
+                <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px">
+                  <span style="font-size:20px">{icon}</span>
+                  <span style="font-size:14px;font-weight:bold;color:#888;text-transform:uppercase">{label}</span>
+                  <span style="margin-left:auto;font-size:12px;color:#888">{vstatus}</span>
+                </div>
+                <p style="margin:0;font-size:16px;font-weight:bold">{vtitle}</p>
+                <p style="margin:4px 0 0;font-size:13px;color:#666">Duration: {vduration}</p>
+                {dl_btn}
+                {desc_block}
+                {tags_block}
+              </div>"""
+
+          shorts_card = video_card(
+              shorts_icon, "Short (60s)", shorts_title, shorts_duration,
+              shorts_status, shorts_run_url, shorts_desc, shorts_tags
           )
+
           if longform_ran:
-              longform_row = (
-                  f"<tr>"
-                  f"<td style='padding:8px'><b>Longform</b></td>"
-                  f"<td style='padding:8px'>{longform_icon} <b>{longform_title}</b></td>"
-                  f"<td style='padding:8px'>{longform_status}</td>"
-                  f"</tr>"
+              longform_card = video_card(
+                  longform_icon, "Longform", longform_title, longform_duration,
+                  longform_status, longform_run_url, longform_desc, longform_tags
               )
           else:
-              longform_row = (
-                  f"<tr>"
-                  f"<td style='padding:8px' colspan='3' style='color:#888'>"
-                  f"Longform not scheduled today — runs every Friday</td>"
-                  f"</tr>"
+              longform_card = (
+                  '<div style="border:1px solid #eee;border-radius:8px;padding:16px;'
+                  'color:#888;font-size:14px">⏭️ Longform not scheduled today — runs every Friday</div>'
               )
 
           body_html = f"""
           <div style="font-family:sans-serif;max-width:640px;margin:0 auto">
-            <h2 style="color:#ff4444">🔴 Red Space Facts — {date_str}</h2>
-            <p>Both videos uploaded to Google Drive (not YouTube — review before publishing).</p>
-            <table width="100%" cellpadding="0" cellspacing="0" style="border-collapse:collapse">
-              <tr style="background:#f5f5f5">
-                <th style="padding:8px;text-align:left">Type</th>
-                <th style="padding:8px;text-align:left">Title</th>
-                <th style="padding:8px;text-align:left">Status</th>
-              </tr>
-              {shorts_row}
-              {longform_row}
-            </table>
-            <p style="color:#888;font-size:12px;margin-top:24px">
-              Videos are in Google Drive → YouTube Automation Backups → CH6_SHORTS and CH6
+            <h2 style="color:#ff2222;margin-bottom:4px">🔴 Red Space Facts</h2>
+            <p style="color:#888;margin-top:0">{date_str} — review &amp; upload manually to YouTube</p>
+            {shorts_card}
+            {longform_card}
+            <p style="color:#aaa;font-size:11px;margin-top:24px">
+              Videos are GitHub Actions artifacts — click Download to open the run, then download from the Artifacts section.
             </p>
           </div>
           """
 
           send_email(subject, body_text, body_html)
 
-          # Brief Telegram ping
-          tg_parts = [f"🔴 *CH6 Red Space Facts* — {date_str}"]
-          tg_parts.append(f"{shorts_icon} Shorts: _{shorts_title}_")
+          # ── Telegram ────────────────────────────────────────────────────────
+          tg = [f"🔴 *CH6 Red Space Facts* — {date_str}"]
+          tg.append(f"{shorts_icon} *Short:* _{shorts_title}_ ({shorts_duration})")
+          if shorts_run_url:
+              tg.append(f"[⬇ Download Short]({shorts_run_url})")
           if longform_ran:
-              tg_parts.append(f"{longform_icon} Longform: _{longform_title}_")
-          tg_parts.append("Videos sent to Google Drive.")
+              tg.append(f"{longform_icon} *Longform:* _{longform_title}_ ({longform_duration})")
+              if longform_run_url:
+                  tg.append(f"[⬇ Download Longform]({longform_run_url})")
+          else:
+              tg.append("⏭️ Longform: not today")
           try:
-              send_message("\n".join(tg_parts))
+              send_message("\n".join(tg))
           except Exception:
               pass
           PYEOF
