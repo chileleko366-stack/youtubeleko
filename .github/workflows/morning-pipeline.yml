@@ -10,6 +10,10 @@ on:
         description: "Comma-separated channel IDs to run (e.g. ch1,ch3) or 'all'"
         required: false
         default: "all"
+      date_override:
+        description: "Manifest date to use (YYYY-MM-DD). Defaults to today. Use yesterday's date if nightly ran before the date-fix was deployed."
+        required: false
+        default: ""
 
 env:
   PYTHONPATH: ${{ github.workspace }}
@@ -64,7 +68,7 @@ jobs:
               api_secret=os.environ["CLOUDINARY_API_SECRET"],
               secure=True,
           )
-          date_str = date.today().isoformat()
+          date_str = os.environ.get("DATE_OVERRIDE") or date.today().isoformat()
           public_id = f"automation/manifests/{date_str}/ch1"
           result = cloudinary.api.resource(public_id, resource_type="raw")
           Path("temp/manifests").mkdir(parents=True, exist_ok=True)
@@ -75,6 +79,7 @@ jobs:
           CLOUDINARY_CLOUD_NAME: ${{ secrets.CLOUDINARY_CLOUD_NAME }}
           CLOUDINARY_API_KEY: ${{ secrets.CLOUDINARY_API_KEY }}
           CLOUDINARY_API_SECRET: ${{ secrets.CLOUDINARY_API_SECRET }}
+          DATE_OVERRIDE: ${{ inputs.date_override }}
 
       - name: Notify CH1 production start
         run: |
@@ -193,7 +198,7 @@ jobs:
               api_secret=os.environ["CLOUDINARY_API_SECRET"],
               secure=True,
           )
-          date_str = date.today().isoformat()
+          date_str = os.environ.get("DATE_OVERRIDE") or date.today().isoformat()
           public_id = f"automation/manifests/{date_str}/ch2"
           result = cloudinary.api.resource(public_id, resource_type="raw")
           Path("temp/manifests").mkdir(parents=True, exist_ok=True)
@@ -204,6 +209,7 @@ jobs:
           CLOUDINARY_CLOUD_NAME: ${{ secrets.CLOUDINARY_CLOUD_NAME }}
           CLOUDINARY_API_KEY: ${{ secrets.CLOUDINARY_API_KEY }}
           CLOUDINARY_API_SECRET: ${{ secrets.CLOUDINARY_API_SECRET }}
+          DATE_OVERRIDE: ${{ inputs.date_override }}
 
       - name: Notify CH2 production start
         run: |
@@ -322,7 +328,7 @@ jobs:
               api_secret=os.environ["CLOUDINARY_API_SECRET"],
               secure=True,
           )
-          date_str = date.today().isoformat()
+          date_str = os.environ.get("DATE_OVERRIDE") or date.today().isoformat()
           public_id = f"automation/manifests/{date_str}/ch3"
           result = cloudinary.api.resource(public_id, resource_type="raw")
           Path("temp/manifests").mkdir(parents=True, exist_ok=True)
@@ -333,6 +339,7 @@ jobs:
           CLOUDINARY_CLOUD_NAME: ${{ secrets.CLOUDINARY_CLOUD_NAME }}
           CLOUDINARY_API_KEY: ${{ secrets.CLOUDINARY_API_KEY }}
           CLOUDINARY_API_SECRET: ${{ secrets.CLOUDINARY_API_SECRET }}
+          DATE_OVERRIDE: ${{ inputs.date_override }}
 
       - name: Notify CH3 production start
         run: |
@@ -451,7 +458,7 @@ jobs:
               api_secret=os.environ["CLOUDINARY_API_SECRET"],
               secure=True,
           )
-          date_str = date.today().isoformat()
+          date_str = os.environ.get("DATE_OVERRIDE") or date.today().isoformat()
           public_id = f"automation/manifests/{date_str}/ch4"
           result = cloudinary.api.resource(public_id, resource_type="raw")
           Path("temp/manifests").mkdir(parents=True, exist_ok=True)
@@ -462,6 +469,7 @@ jobs:
           CLOUDINARY_CLOUD_NAME: ${{ secrets.CLOUDINARY_CLOUD_NAME }}
           CLOUDINARY_API_KEY: ${{ secrets.CLOUDINARY_API_KEY }}
           CLOUDINARY_API_SECRET: ${{ secrets.CLOUDINARY_API_SECRET }}
+          DATE_OVERRIDE: ${{ inputs.date_override }}
 
       - name: Notify CH4 production start
         run: |
@@ -580,7 +588,7 @@ jobs:
               api_secret=os.environ["CLOUDINARY_API_SECRET"],
               secure=True,
           )
-          date_str = date.today().isoformat()
+          date_str = os.environ.get("DATE_OVERRIDE") or date.today().isoformat()
           public_id = f"automation/manifests/{date_str}/ch5"
           result = cloudinary.api.resource(public_id, resource_type="raw")
           Path("temp/manifests").mkdir(parents=True, exist_ok=True)
@@ -591,6 +599,7 @@ jobs:
           CLOUDINARY_CLOUD_NAME: ${{ secrets.CLOUDINARY_CLOUD_NAME }}
           CLOUDINARY_API_KEY: ${{ secrets.CLOUDINARY_API_KEY }}
           CLOUDINARY_API_SECRET: ${{ secrets.CLOUDINARY_API_SECRET }}
+          DATE_OVERRIDE: ${{ inputs.date_override }}
 
       - name: Notify CH5 production start
         run: |
