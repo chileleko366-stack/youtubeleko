@@ -29,6 +29,8 @@ jobs:
     continue-on-error: true
     permissions:
       contents: read
+    outputs:
+      title: ${{ steps.export_result.outputs.title }}
 
     steps:
       - name: Checkout repository
@@ -123,6 +125,27 @@ jobs:
           GOOGLE_DRIVE_CREDENTIALS: ${{ secrets.GOOGLE_DRIVE_CREDENTIALS }}
         continue-on-error: true
 
+      - name: Export result
+        id: export_result
+        if: always()
+        run: |
+          python - <<'PYEOF'
+          import json, os
+          from pathlib import Path
+          title = "unknown"
+          try:
+              data = json.loads(Path("temp/manifests/ch1.json").read_text())
+              title = (data.get("metadata", {}).get("title", "")
+                       or data.get("topic", {}).get("title", "")
+                       or "unknown")
+          except Exception:
+              pass
+          out = os.environ.get("GITHUB_OUTPUT", "")
+          if out:
+              with open(out, "a") as f:
+                  f.write(f"title={title}\n")
+          PYEOF
+
       - name: Notify CH1 complete
         if: always()
         run: |
@@ -167,6 +190,8 @@ jobs:
     continue-on-error: true
     permissions:
       contents: read
+    outputs:
+      title: ${{ steps.export_result.outputs.title }}
 
     steps:
       - name: Checkout repository
@@ -261,6 +286,27 @@ jobs:
           GOOGLE_DRIVE_CREDENTIALS: ${{ secrets.GOOGLE_DRIVE_CREDENTIALS }}
         continue-on-error: true
 
+      - name: Export result
+        id: export_result
+        if: always()
+        run: |
+          python - <<'PYEOF'
+          import json, os
+          from pathlib import Path
+          title = "unknown"
+          try:
+              data = json.loads(Path("temp/manifests/ch2.json").read_text())
+              title = (data.get("metadata", {}).get("title", "")
+                       or data.get("topic", {}).get("title", "")
+                       or "unknown")
+          except Exception:
+              pass
+          out = os.environ.get("GITHUB_OUTPUT", "")
+          if out:
+              with open(out, "a") as f:
+                  f.write(f"title={title}\n")
+          PYEOF
+
       - name: Notify CH2 complete
         if: always()
         run: |
@@ -305,6 +351,8 @@ jobs:
     continue-on-error: true
     permissions:
       contents: read
+    outputs:
+      title: ${{ steps.export_result.outputs.title }}
 
     steps:
       - name: Checkout repository
@@ -399,6 +447,27 @@ jobs:
           GOOGLE_DRIVE_CREDENTIALS: ${{ secrets.GOOGLE_DRIVE_CREDENTIALS }}
         continue-on-error: true
 
+      - name: Export result
+        id: export_result
+        if: always()
+        run: |
+          python - <<'PYEOF'
+          import json, os
+          from pathlib import Path
+          title = "unknown"
+          try:
+              data = json.loads(Path("temp/manifests/ch3.json").read_text())
+              title = (data.get("metadata", {}).get("title", "")
+                       or data.get("topic", {}).get("title", "")
+                       or "unknown")
+          except Exception:
+              pass
+          out = os.environ.get("GITHUB_OUTPUT", "")
+          if out:
+              with open(out, "a") as f:
+                  f.write(f"title={title}\n")
+          PYEOF
+
       - name: Notify CH3 complete
         if: always()
         run: |
@@ -443,6 +512,8 @@ jobs:
     continue-on-error: true
     permissions:
       contents: read
+    outputs:
+      title: ${{ steps.export_result.outputs.title }}
 
     steps:
       - name: Checkout repository
@@ -537,6 +608,27 @@ jobs:
           GOOGLE_DRIVE_CREDENTIALS: ${{ secrets.GOOGLE_DRIVE_CREDENTIALS }}
         continue-on-error: true
 
+      - name: Export result
+        id: export_result
+        if: always()
+        run: |
+          python - <<'PYEOF'
+          import json, os
+          from pathlib import Path
+          title = "unknown"
+          try:
+              data = json.loads(Path("temp/manifests/ch4.json").read_text())
+              title = (data.get("metadata", {}).get("title", "")
+                       or data.get("topic", {}).get("title", "")
+                       or "unknown")
+          except Exception:
+              pass
+          out = os.environ.get("GITHUB_OUTPUT", "")
+          if out:
+              with open(out, "a") as f:
+                  f.write(f"title={title}\n")
+          PYEOF
+
       - name: Notify CH4 complete
         if: always()
         run: |
@@ -581,6 +673,8 @@ jobs:
     continue-on-error: true
     permissions:
       contents: read
+    outputs:
+      title: ${{ steps.export_result.outputs.title }}
 
     steps:
       - name: Checkout repository
@@ -675,6 +769,27 @@ jobs:
           GOOGLE_DRIVE_CREDENTIALS: ${{ secrets.GOOGLE_DRIVE_CREDENTIALS }}
         continue-on-error: true
 
+      - name: Export result
+        id: export_result
+        if: always()
+        run: |
+          python - <<'PYEOF'
+          import json, os
+          from pathlib import Path
+          title = "unknown"
+          try:
+              data = json.loads(Path("temp/manifests/ch5.json").read_text())
+              title = (data.get("metadata", {}).get("title", "")
+                       or data.get("topic", {}).get("title", "")
+                       or "unknown")
+          except Exception:
+              pass
+          out = os.environ.get("GITHUB_OUTPUT", "")
+          if out:
+              with open(out, "a") as f:
+                  f.write(f"title={title}\n")
+          PYEOF
+
       - name: Notify CH5 complete
         if: always()
         run: |
@@ -734,18 +849,56 @@ jobs:
       - name: Install Python dependencies
         run: pip install -r requirements.txt
 
-      - name: Send daily summary
+      - name: Send detailed morning summary email
+        if: always()
         run: |
-          python - <<'PYEOF'
-          from scripts.telegram_notify import send_message
-          from scripts.email_notify import notify_pipeline_success
+          CH1_STATUS="${{ needs.produce-ch1.result }}"
+          CH2_STATUS="${{ needs.produce-ch2.result }}"
+          CH3_STATUS="${{ needs.produce-ch3.result }}"
+          CH4_STATUS="${{ needs.produce-ch4.result }}"
+          CH5_STATUS="${{ needs.produce-ch5.result }}"
+          CH1_TITLE="${{ needs.produce-ch1.outputs.title }}"
+          CH2_TITLE="${{ needs.produce-ch2.outputs.title }}"
+          CH3_TITLE="${{ needs.produce-ch3.outputs.title }}"
+          CH4_TITLE="${{ needs.produce-ch4.outputs.title }}"
+          CH5_TITLE="${{ needs.produce-ch5.outputs.title }}"
+          python - <<PYEOF
+          import os
           from datetime import date
+          from scripts.telegram_notify import send_message
+          from scripts.email_notify import send_morning_summary
+
           date_str = date.today().isoformat()
+
+          channel_info = [
+              ("ch1", "Dopamine Loop",   "${CH1_STATUS}", "${CH1_TITLE}"),
+              ("ch2", "FinanceFiction",  "${CH2_STATUS}", "${CH2_TITLE}"),
+              ("ch3", "Redacted",        "${CH3_STATUS}", "${CH3_TITLE}"),
+              ("ch4", "The Grey Matter", "${CH4_STATUS}", "${CH4_TITLE}"),
+              ("ch5", "The Quiet Record","${CH5_STATUS}", "${CH5_TITLE}"),
+          ]
+
+          results = {}
+          for ch_id, ch_name, status, title in channel_info:
+              ok = status == "success"
+              results[ch_id] = {
+                  "status": "ok" if ok else "error",
+                  "title": title or ch_name,
+                  "failed_step": "see GitHub Actions logs" if not ok else "",
+                  "error": f"Job result: {status}" if not ok else "",
+              }
+
+          # Detailed email
+          send_morning_summary(results, date_str)
+
+          # Brief Telegram ping
+          ok_count = sum(1 for d in results.values() if d["status"] == "ok")
+          total = len(results)
+          icon = "✅" if ok_count == total else ("⚠️" if ok_count > 0 else "❌")
           send_message(
-              f"📊 *Daily Summary* — Morning pipeline complete for {date_str}. "
-              f"Videos scheduled to publish at 18:00 UTC."
+              f"{icon} *Morning Pipeline* — {ok_count}/{total} videos produced ({date_str})"
+              f"\nFull report sent to email."
           )
-          notify_pipeline_success("Morning — Daily Summary", date_str, "")
           PYEOF
         env:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
