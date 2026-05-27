@@ -49,11 +49,11 @@ _OPENAI_COMPAT_PROVIDERS = [
         "models": ["llama-3.3-70b-versatile", "llama-3.1-70b-versatile"],
     },
     {
-        # Free tier only includes 8B — 70B models return 404 without a paid plan
+        # Free tier only includes 8B — model name changed to llama-3.1-8b (with hyphens)
         "name": "Cerebras",
         "env_key": "CEREBRAS_API_KEY",
         "base_url": "https://api.cerebras.ai/v1",
-        "models": ["llama3.1-8b"],
+        "models": ["llama-3.1-8b", "llama3.1-8b"],
     },
     {
         "name": "SambaNova",
@@ -255,6 +255,19 @@ def _pollinations_generate(messages: list, temperature: float) -> str:
                 raise ValueError("Empty response")
             if content.startswith("⚠️") or "being deprecated" in content:
                 raise ValueError("Pollinations returned deprecation notice instead of JSON")
+            # Pollinations reasoning models return {"role":"assistant","reasoning":"...","content":"..."}
+            # Extract the actual content field when present
+            if content.startswith("{"):
+                try:
+                    import json as _json
+                    obj = _json.loads(content)
+                    if isinstance(obj, dict):
+                        extracted = obj.get("content") or obj.get("text") or obj.get("response")
+                        if extracted and isinstance(extracted, str) and extracted.strip():
+                            content = extracted.strip()
+                            logger.debug("Pollinations: extracted content from JSON wrapper")
+                except _json.JSONDecodeError:
+                    pass
             logger.info("Pollinations succeeded.")
             return content
         except Exception as exc:

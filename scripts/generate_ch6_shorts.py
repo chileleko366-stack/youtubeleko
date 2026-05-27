@@ -166,10 +166,31 @@ Return ONLY a valid JSON array:
 
 Return ONLY the JSON array, no extra text."""
 
-    return _call_json(
+    result = _call_json(
         "generate_lines",
         lambda: client.generate(prompt=prompt, system_prompt=system, max_tokens=2000, temperature=0.3),
     )
+
+    # Guard: _call_json should return a list; if a dict came back (e.g. wrapped response),
+    # try to find the list inside it before failing.
+    if isinstance(result, dict):
+        for key in ("lines", "breakdown", "content", "data"):
+            val = result.get(key)
+            if isinstance(val, list):
+                return val
+            if isinstance(val, str):
+                try:
+                    parsed = json.loads(val)
+                    if isinstance(parsed, list):
+                        return parsed
+                except json.JSONDecodeError:
+                    pass
+        raise ValueError(f"generate_lines: expected JSON array, got dict with keys {list(result.keys())}")
+
+    if not isinstance(result, list):
+        raise ValueError(f"generate_lines: expected JSON array, got {type(result).__name__}")
+
+    return result
 
 
 def generate_metadata(topic: Dict[str, Any], script: str) -> Dict[str, Any]:
