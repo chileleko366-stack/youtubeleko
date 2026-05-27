@@ -1,0 +1,43 @@
+{
+  "channel_id": "CH6",
+  "channel_name": "Red Space Facts",
+  "niche": "Space science / Astronomy / Exploration",
+  "audience": "Curious adults 18-45, space enthusiasts and casual learners",
+  "length_minutes_min": 12,
+  "length_minutes_max": 18,
+  "word_count": 1800,
+  "shorts_duration_seconds": 55,
+  "brand_color": "#ff4444",
+  "background_color": "#03010a",
+  "font_primary": "Arial",
+  "font_secondary": "Arial",
+  "posting_schedule": {
+    "shorts": {
+      "days": ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"],
+      "time_utc": "12:00"
+    },
+    "longform": {
+      "days": ["Friday"],
+      "time_utc": "18:00"
+    }
+  },
+  "narrator_mode": true,
+  "tts_voice": "en-US-AriaNeural",
+  "tts_rate": "+5%",
+  "tts_pitch": "+0Hz",
+  "visual_style": {
+    "aesthetic": "Dark space, deep red accents, minimal clean text",
+    "film_grain": 0.04,
+    "thumbnail_style": "Deep space background, bold white and red text, planetary or celestial imagery"
+  },
+  "content_strategy": {
+    "shorts_structure": "hook → core_fact → mind_blow → cta",
+    "longform_structure": "hook → background → discovery → implications → analogy → wider_context → conclusion",
+    "tone": "Authoritative yet accessible, awe-inspiring, factual"
+  },
+  "forbidden_words": ["amazing", "incredible", "unbelievable", "literally", "basically"],
+  "forbidden_topics": ["astrology", "UFO conspiracy theories", "flat earth", "pseudoscience"],
+  "default_tags": ["SpaceFacts", "Astronomy", "NASA", "Space", "Science", "Universe"],
+  "music_style": "ambient_space_cinematic",
+  "b_roll_intensity": 60
+}

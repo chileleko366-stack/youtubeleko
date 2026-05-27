@@ -1,0 +1,382 @@
+name: CH6 — Red Space Facts Pipeline
+
+on:
+  schedule:
+    # Run daily at 09:00 UTC — Shorts every day, Longform auto-detected on Fridays
+    - cron: "0 9 * * *"
+  workflow_dispatch:
+    inputs:
+      force_longform:
+        description: "Force longform generation even if not Friday (true/false)"
+        required: false
+        default: "false"
+
+env:
+  PYTHONPATH: ${{ github.workspace }}
+
+# ──────────────────────────────────────────────────────────────────────────────
+# DAY CHECK — determines whether to run the Friday longform job
+# ──────────────────────────────────────────────────────────────────────────────
+jobs:
+  check-day:
+    name: Check Day of Week
+    runs-on: ubuntu-latest
+    outputs:
+      run_longform: ${{ steps.check.outputs.run_longform }}
+    steps:
+      - id: check
+        name: Is it Friday?
+        run: |
+          DAY=$(date +%u)
+          FORCE="${{ github.event.inputs.force_longform }}"
+          if [ "$DAY" = "5" ] || [ "$FORCE" = "true" ]; then
+            echo "run_longform=true" >> $GITHUB_OUTPUT
+            echo "Longform: YES (day=$DAY, force=$FORCE)"
+          else
+            echo "run_longform=false" >> $GITHUB_OUTPUT
+            echo "Longform: NO (day=$DAY, force=$FORCE)"
+          fi
+
+# ──────────────────────────────────────────────────────────────────────────────
+# SHORTS — runs every day
+# ──────────────────────────────────────────────────────────────────────────────
+  produce-shorts:
+    name: CH6 — Daily Shorts
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    continue-on-error: true
+    permissions:
+      contents: read
+    outputs:
+      title: ${{ steps.export_result.outputs.title }}
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Set up Node.js 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: remotion/package-lock.json
+
+      - name: Install FFmpeg
+        run: sudo apt-get update -qq && sudo apt-get install -y ffmpeg
+
+      - name: Install Python dependencies
+        run: pip install -r requirements.txt
+
+      - name: Install Remotion dependencies
+        run: cd remotion && npm ci
+        continue-on-error: true
+
+      - name: Research + generate Shorts manifest
+        id: gen_shorts
+        run: python scripts/generate_ch6_shorts.py
+        env:
+          GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
+          CEREBRAS_API_KEY: ${{ secrets.CEREBRAS_API_KEY }}
+          SAMBANOVA_API_KEY: ${{ secrets.SAMBANOVA_API_KEY }}
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          GITHUB_TOKEN: ${{ github.token }}
+          TOGETHER_API_KEY: ${{ secrets.TOGETHER_API_KEY }}
+          OPENROUTER_KEY: ${{ secrets.OPENROUTER_KEY }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          CLOUDINARY_CLOUD_NAME: ${{ secrets.CLOUDINARY_CLOUD_NAME }}
+          CLOUDINARY_API_KEY: ${{ secrets.CLOUDINARY_API_KEY }}
+          CLOUDINARY_API_SECRET: ${{ secrets.CLOUDINARY_API_SECRET }}
+
+      - name: Assemble Shorts video
+        run: python scripts/assemble_shorts.py temp/manifests/ch6_short.json
+        env:
+          GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
+          CEREBRAS_API_KEY: ${{ secrets.CEREBRAS_API_KEY }}
+          SAMBANOVA_API_KEY: ${{ secrets.SAMBANOVA_API_KEY }}
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          GITHUB_TOKEN: ${{ github.token }}
+          TOGETHER_API_KEY: ${{ secrets.TOGETHER_API_KEY }}
+          OPENROUTER_KEY: ${{ secrets.OPENROUTER_KEY }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+
+      - name: Upload Shorts to Google Drive
+        run: |
+          python - <<'PYEOF'
+          import glob, os, sys
+          from pathlib import Path
+          from datetime import date
+          sys.path.insert(0, ".")
+          from scripts.upload_drive import backup_to_drive
+          date_str = date.today().isoformat()
+          # Find the assembled short
+          videos = sorted(glob.glob("temp/output/ch6_*.mp4"))
+          if not videos:
+              print("No assembled short video found — skipping Drive upload")
+              sys.exit(0)
+          video_path = videos[-1]
+          file_id = backup_to_drive(video_path, "ch6_shorts", date_str)
+          if file_id:
+              print(f"Uploaded to Drive: {Path(video_path).name} (id={file_id})")
+          else:
+              print(f"Drive upload failed for {video_path}")
+          PYEOF
+        env:
+          GOOGLE_DRIVE_CREDENTIALS: ${{ secrets.GOOGLE_DRIVE_CREDENTIALS }}
+        continue-on-error: true
+
+      - name: Export result
+        id: export_result
+        if: always()
+        run: |
+          python - <<'PYEOF'
+          import json, os
+          from pathlib import Path
+          title = "unknown"
+          try:
+              data = json.loads(Path("temp/manifests/ch6_short.json").read_text())
+              title = data.get("topic", {}).get("title", "") or "unknown"
+          except Exception:
+              pass
+          out = os.environ.get("GITHUB_OUTPUT", "")
+          if out:
+              with open(out, "a") as f:
+                  f.write(f"title={title}\n")
+          PYEOF
+
+# ──────────────────────────────────────────────────────────────────────────────
+# LONGFORM — runs on Fridays only (or when force_longform=true)
+# ──────────────────────────────────────────────────────────────────────────────
+  produce-longform:
+    name: CH6 — Friday Longform
+    needs: check-day
+    if: needs.check-day.outputs.run_longform == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    continue-on-error: true
+    permissions:
+      contents: read
+    outputs:
+      title: ${{ steps.export_result.outputs.title }}
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Set up Node.js 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: remotion/package-lock.json
+
+      - name: Install FFmpeg
+        run: sudo apt-get update -qq && sudo apt-get install -y ffmpeg
+
+      - name: Install Python dependencies
+        run: pip install -r requirements.txt
+
+      - name: Install Remotion dependencies
+        run: cd remotion && npm ci
+
+      - name: Generate longform manifest (7-stage pipeline)
+        id: gen_longform
+        run: python scripts/generate_ch6_longform.py
+        env:
+          GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
+          CEREBRAS_API_KEY: ${{ secrets.CEREBRAS_API_KEY }}
+          SAMBANOVA_API_KEY: ${{ secrets.SAMBANOVA_API_KEY }}
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          GITHUB_TOKEN: ${{ github.token }}
+          TOGETHER_API_KEY: ${{ secrets.TOGETHER_API_KEY }}
+          OPENROUTER_KEY: ${{ secrets.OPENROUTER_KEY }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          CLOUDINARY_CLOUD_NAME: ${{ secrets.CLOUDINARY_CLOUD_NAME }}
+          CLOUDINARY_API_KEY: ${{ secrets.CLOUDINARY_API_KEY }}
+          CLOUDINARY_API_SECRET: ${{ secrets.CLOUDINARY_API_SECRET }}
+
+      - name: Fetch stock footage
+        run: python scripts/stock_footage.py temp/manifests/ch6.json
+        env:
+          PEXELS_API_KEY: ${{ secrets.PEXELS_API_KEY }}
+
+      - name: Generate voiceover
+        run: python scripts/generate_voiceover.py temp/manifests/ch6.json
+
+      - name: Generate thumbnail
+        run: python scripts/generate_thumbnail.py temp/manifests/ch6.json
+
+      - name: Render motion graphics
+        run: python scripts/render_mographs.py temp/manifests/ch6.json
+
+      - name: Assemble longform video
+        run: python scripts/assemble_video.py temp/manifests/ch6.json
+
+      - name: Upload longform to Google Drive
+        run: python scripts/upload_drive.py temp/manifests/ch6.json
+        env:
+          GOOGLE_DRIVE_CREDENTIALS: ${{ secrets.GOOGLE_DRIVE_CREDENTIALS }}
+        continue-on-error: true
+
+      - name: Export result
+        id: export_result
+        if: always()
+        run: |
+          python - <<'PYEOF'
+          import json, os
+          from pathlib import Path
+          title = "unknown"
+          try:
+              data = json.loads(Path("temp/manifests/ch6.json").read_text())
+              title = (data.get("metadata", {}).get("title", "")
+                       or data.get("topic", {}).get("title", "")
+                       or "unknown")
+          except Exception:
+              pass
+          out = os.environ.get("GITHUB_OUTPUT", "")
+          if out:
+              with open(out, "a") as f:
+                  f.write(f"title={title}\n")
+          PYEOF
+
+# ──────────────────────────────────────────────────────────────────────────────
+# SUMMARY — always runs, sends combined email
+# ──────────────────────────────────────────────────────────────────────────────
+  notify:
+    name: Send Summary Email
+    needs: [produce-shorts, produce-longform]
+    if: always()
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Install Python dependencies
+        run: pip install -r requirements.txt
+
+      - name: Send summary email
+        run: |
+          SHORTS_STATUS="${{ needs.produce-shorts.result }}"
+          SHORTS_TITLE="${{ needs.produce-shorts.outputs.title }}"
+          LONGFORM_STATUS="${{ needs.produce-longform.result }}"
+          LONGFORM_TITLE="${{ needs.produce-longform.outputs.title }}"
+          python - <<PYEOF
+          import os
+          from datetime import date
+          from scripts.email_notify import send_email
+          from scripts.telegram_notify import send_message
+
+          date_str = date.today().isoformat()
+          shorts_status = "${SHORTS_STATUS}"
+          shorts_title = "${SHORTS_TITLE}" or "unknown"
+          longform_status = "${LONGFORM_STATUS}"
+          longform_title = "${LONGFORM_TITLE}" or "not run"
+
+          shorts_ok = shorts_status == "success"
+          longform_ran = longform_status not in ("skipped", "")
+          longform_ok = longform_status == "success"
+
+          shorts_icon = "✅" if shorts_ok else "❌"
+          longform_icon = "✅" if longform_ok else ("⏭️" if not longform_ran else "❌")
+
+          subject = f"[YoutuBeLeko] CH6 Red Space Facts — {date_str}"
+
+          # Plain text
+          lines = [
+              f"CH6 Red Space Facts — {date_str}",
+              "",
+              f"SHORTS ({shorts_icon}):   {shorts_title}",
+              f"  Status: {shorts_status} — uploaded to Google Drive",
+          ]
+          if longform_ran:
+              lines.append(f"LONGFORM ({longform_icon}): {longform_title}")
+              lines.append(f"  Status: {longform_status} — uploaded to Google Drive")
+          else:
+              lines.append("LONGFORM: Not scheduled today (runs Fridays)")
+
+          body_text = "\n".join(lines)
+
+          # HTML
+          shorts_row = (
+              f"<tr>"
+              f"<td style='padding:8px;border-bottom:1px solid #eee'><b>Shorts</b></td>"
+              f"<td style='padding:8px;border-bottom:1px solid #eee'>{shorts_icon} <b>{shorts_title}</b></td>"
+              f"<td style='padding:8px;border-bottom:1px solid #eee'>{shorts_status}</td>"
+              f"</tr>"
+          )
+          if longform_ran:
+              longform_row = (
+                  f"<tr>"
+                  f"<td style='padding:8px'><b>Longform</b></td>"
+                  f"<td style='padding:8px'>{longform_icon} <b>{longform_title}</b></td>"
+                  f"<td style='padding:8px'>{longform_status}</td>"
+                  f"</tr>"
+              )
+          else:
+              longform_row = (
+                  f"<tr>"
+                  f"<td style='padding:8px' colspan='3' style='color:#888'>"
+                  f"Longform not scheduled today — runs every Friday</td>"
+                  f"</tr>"
+              )
+
+          body_html = f"""
+          <div style="font-family:sans-serif;max-width:640px;margin:0 auto">
+            <h2 style="color:#ff4444">🔴 Red Space Facts — {date_str}</h2>
+            <p>Both videos uploaded to Google Drive (not YouTube — review before publishing).</p>
+            <table width="100%" cellpadding="0" cellspacing="0" style="border-collapse:collapse">
+              <tr style="background:#f5f5f5">
+                <th style="padding:8px;text-align:left">Type</th>
+                <th style="padding:8px;text-align:left">Title</th>
+                <th style="padding:8px;text-align:left">Status</th>
+              </tr>
+              {shorts_row}
+              {longform_row}
+            </table>
+            <p style="color:#888;font-size:12px;margin-top:24px">
+              Videos are in Google Drive → YouTube Automation Backups → CH6_SHORTS and CH6
+            </p>
+          </div>
+          """
+
+          send_email(subject, body_text, body_html)
+
+          # Brief Telegram ping
+          tg_parts = [f"🔴 *CH6 Red Space Facts* — {date_str}"]
+          tg_parts.append(f"{shorts_icon} Shorts: _{shorts_title}_")
+          if longform_ran:
+              tg_parts.append(f"{longform_icon} Longform: _{longform_title}_")
+          tg_parts.append("Videos sent to Google Drive.")
+          try:
+              send_message("\n".join(tg_parts))
+          except Exception:
+              pass
+          PYEOF
+        env:
+          GMAIL_USER: ${{ secrets.GMAIL_USER }}
+          GMAIL_APP_PASSWORD: ${{ secrets.GMAIL_APP_PASSWORD }}
+          GMAIL_TO: ${{ secrets.GMAIL_TO }}
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+        continue-on-error: true

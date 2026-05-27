@@ -112,3 +112,36 @@ def backup_to_drive(
             if attempt < 3:
                 time.sleep(attempt * 10)
     return None
+
+
+if __name__ == "__main__":
+    import glob
+    import sys
+
+    logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(name)s: %(message)s")
+
+    if len(sys.argv) < 2:
+        print("Usage: python upload_drive.py <manifest.json>")
+        sys.exit(1)
+
+    with open(sys.argv[1], "r", encoding="utf-8") as fh:
+        manifest = json.load(fh)
+
+    ch_id = manifest.get("channel_id", "unknown")
+    date_str = manifest.get("date") or __import__("datetime").date.today().isoformat()
+
+    # Find the assembled video in temp/output/
+    candidates = sorted(glob.glob(f"temp/output/{ch_id}_*.mp4"))
+    if not candidates:
+        logger.error("No assembled video found in temp/output/ for %s — skipping Drive upload", ch_id)
+        sys.exit(0)
+
+    video_path = candidates[-1]
+    logger.info("Uploading to Drive: %s", video_path)
+    file_id = backup_to_drive(video_path, ch_id, date_str)
+    if file_id:
+        print(f"Drive upload complete: {Path(video_path).name} (id={file_id})")
+        sys.exit(0)
+    else:
+        print(f"ERROR: Drive upload failed for {video_path}")
+        sys.exit(1)
