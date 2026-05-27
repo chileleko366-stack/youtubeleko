@@ -9,6 +9,7 @@ Policy:
 
 import logging
 import os
+import time
 from datetime import datetime, timedelta, timezone
 from typing import List
 
@@ -91,15 +92,23 @@ def cleanup_old_assets(
             age = now - created_at
             if age > max_age:
                 public_id = asset.get("public_id")
-                try:
-                    cloudinary.api.delete_resources(
-                        [public_id], resource_type=resource_type
-                    )
-                    deleted[resource_type] += 1
-                    logger.info("Deleted %s/%s (age: %s)", resource_type, public_id, age)
-                except Exception as exc:
-                    logger.error("Failed to delete %s/%s: %s", resource_type, public_id, exc)
-                    deleted["errors"] += 1
+                for attempt in range(1, 3):
+                    try:
+                        cloudinary.api.delete_resources(
+                            [public_id], resource_type=resource_type
+                        )
+                        deleted[resource_type] += 1
+                        logger.info("Deleted %s/%s (age: %s)", resource_type, public_id, age)
+                        break
+                    except Exception as exc:
+                        logger.error(
+                            "Failed to delete %s/%s (attempt %d): %s",
+                            resource_type, public_id, attempt, exc,
+                        )
+                        if attempt < 2:
+                            time.sleep(5)
+                        else:
+                            deleted["errors"] += 1
 
     logger.info(
         "Cleanup complete: raw=%d video=%d image=%d errors=%d",

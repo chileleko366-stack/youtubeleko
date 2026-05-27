@@ -84,50 +84,61 @@ def fetch_footage_for_line(
     headers = _get_headers()
 
     for query in keywords:
-        try:
-            params = {
-                "query": query,
-                "orientation": "landscape",
-                "size": "large",
-                "per_page": per_page,
-            }
-            resp = requests.get(
-                PEXELS_API_BASE,
-                headers=headers,
-                params=params,
-                timeout=REQUEST_TIMEOUT,
-            )
-            resp.raise_for_status()
-            data = resp.json()
-            videos = data.get("videos", [])
+        for attempt in range(1, 3):
+            try:
+                params = {
+                    "query": query,
+                    "orientation": "landscape",
+                    "size": "large",
+                    "per_page": per_page,
+                }
+                resp = requests.get(
+                    PEXELS_API_BASE,
+                    headers=headers,
+                    params=params,
+                    timeout=REQUEST_TIMEOUT,
+                )
+                resp.raise_for_status()
+                data = resp.json()
+                videos = data.get("videos", [])
 
-            if not videos:
-                logger.debug("[%s] line %d – no results for '%s'", channel_id, line_number, query)
-                time.sleep(RATE_LIMIT_SLEEP)
-                continue
+                if not videos:
+                    logger.debug("[%s] line %d – no results for '%s'", channel_id, line_number, query)
+                    break
 
-            # Pick first video that has files
-            for video in videos:
-                files = video.get("video_files", [])
-                if files:
-                    best = _pick_best_video_file(files)
-                    if best and best.get("link"):
-                        logger.info(
-                            "[%s] line %d – found clip '%s' (%dx%d) for '%s'",
-                            channel_id,
-                            line_number,
-                            video.get("id", "?"),
-                            best.get("width", 0),
-                            best.get("height", 0),
-                            query,
-                        )
-                        time.sleep(RATE_LIMIT_SLEEP)
-                        return best["link"]
+                # Pick first video that has files
+                for video in videos:
+                    files = video.get("video_files", [])
+                    if files:
+                        best = _pick_best_video_file(files)
+                        if best and best.get("link"):
+                            logger.info(
+                                "[%s] line %d – found clip '%s' (%dx%d) for '%s'",
+                                channel_id,
+                                line_number,
+                                video.get("id", "?"),
+                                best.get("width", 0),
+                                best.get("height", 0),
+                                query,
+                            )
+                            time.sleep(RATE_LIMIT_SLEEP)
+                            return best["link"]
+                break  # no usable clip found but request succeeded — try next keyword
 
-        except requests.HTTPError as exc:
-            logger.warning("[%s] line %d – Pexels HTTP error for '%s': %s", channel_id, line_number, query, exc)
-        except Exception as exc:  # pylint: disable=broad-except
-            logger.warning("[%s] line %d – Pexels error for '%s': %s", channel_id, line_number, query, exc)
+            except requests.HTTPError as exc:
+                logger.warning(
+                    "[%s] line %d – Pexels HTTP error for '%s' (attempt %d): %s",
+                    channel_id, line_number, query, attempt, exc,
+                )
+                if attempt < 2:
+                    time.sleep(5)
+            except Exception as exc:  # pylint: disable=broad-except
+                logger.warning(
+                    "[%s] line %d – Pexels error for '%s' (attempt %d): %s",
+                    channel_id, line_number, query, attempt, exc,
+                )
+                if attempt < 2:
+                    time.sleep(5)
 
         time.sleep(RATE_LIMIT_SLEEP)
 
@@ -144,20 +155,23 @@ def download_clip(url: str, output_path: str) -> bool:
     output = Path(output_path)
     output.parent.mkdir(parents=True, exist_ok=True)
 
-    try:
-        logger.info("Downloading clip: %s → %s", url, output_path)
-        with requests.get(url, stream=True, timeout=120) as resp:
-            resp.raise_for_status()
-            with open(output, "wb") as fh:
-                for chunk in resp.iter_content(chunk_size=DOWNLOAD_CHUNK_SIZE):
-                    fh.write(chunk)
-        logger.info("Download complete: %s (%.1f MB)", output_path, output.stat().st_size / 1e6)
-        return True
-    except Exception as exc:  # pylint: disable=broad-except
-        logger.error("Download failed for %s: %s", url, exc)
-        if output.exists():
-            output.unlink()
-        return False
+    for attempt in range(1, 3):
+        try:
+            logger.info("Downloading clip (attempt %d): %s → %s", attempt, url, output_path)
+            with requests.get(url, stream=True, timeout=120) as resp:
+                resp.raise_for_status()
+                with open(output, "wb") as fh:
+                    for chunk in resp.iter_content(chunk_size=DOWNLOAD_CHUNK_SIZE):
+                        fh.write(chunk)
+            logger.info("Download complete: %s (%.1f MB)", output_path, output.stat().st_size / 1e6)
+            return True
+        except Exception as exc:  # pylint: disable=broad-except
+            logger.error("Download failed for %s (attempt %d): %s", url, attempt, exc)
+            if output.exists():
+                output.unlink()
+            if attempt < 2:
+                time.sleep(5)
+    return False
 
 
 def fetch_all_footage(

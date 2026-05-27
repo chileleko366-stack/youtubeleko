@@ -10,6 +10,7 @@ import logging
 import os
 import re
 import subprocess
+import time
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -86,6 +87,14 @@ def render_composition(
     props_json = json.dumps(props)
     composition = TREATMENT_TO_COMPOSITION.get(composition_name, DEFAULT_COMPOSITION)
 
+    # Guard: duration_frames must be at least 1 to produce a valid frame range
+    if duration_frames < 1:
+        logger.warning(
+            "duration_frames=%d is invalid for '%s' — clamping to 1",
+            duration_frames, composition,
+        )
+        duration_frames = 1
+
     cmd = [
         "npx",
         "remotion",
@@ -110,38 +119,46 @@ def render_composition(
         fps,
     )
 
-    try:
-        result = subprocess.run(
-            cmd,
-            cwd=REMOTION_DIR,
-            capture_output=True,
-            text=True,
-            timeout=RENDER_TIMEOUT,
-        )
-
-        if result.returncode != 0:
-            logger.error(
-                "Remotion render failed for '%s':\nSTDOUT: %s\nSTDERR: %s",
-                composition,
-                result.stdout[-2000:],
-                result.stderr[-2000:],
+    for attempt in range(1, 3):
+        try:
+            result = subprocess.run(
+                cmd,
+                cwd=REMOTION_DIR,
+                capture_output=True,
+                text=True,
+                timeout=RENDER_TIMEOUT,
             )
+
+            if result.returncode != 0:
+                logger.error(
+                    "Remotion render failed for '%s' (attempt %d):\nSTDOUT: %s\nSTDERR: %s",
+                    composition,
+                    attempt,
+                    result.stdout[-2000:],
+                    result.stderr[-2000:],
+                )
+                if attempt < 2:
+                    time.sleep(5)
+                continue
+
+            if output.exists() and output.stat().st_size > 0:
+                logger.info(
+                    "Render complete: %s (%.1f MB)",
+                    output_path,
+                    output.stat().st_size / 1e6,
+                )
+                return True
+            else:
+                logger.error("Render produced no output file: %s", output_path)
+                if attempt < 2:
+                    time.sleep(5)
+                continue
+
+        except subprocess.TimeoutExpired:
+            logger.error("Remotion render timed out after %ds for '%s'", RENDER_TIMEOUT, composition)
             return False
 
-        if output.exists() and output.stat().st_size > 0:
-            logger.info(
-                "Render complete: %s (%.1f MB)",
-                output_path,
-                output.stat().st_size / 1e6,
-            )
-            return True
-        else:
-            logger.error("Render produced no output file: %s", output_path)
-            return False
-
-    except subprocess.TimeoutExpired:
-        logger.error("Remotion render timed out after %ds for '%s'", RENDER_TIMEOUT, composition)
-        return False
+    return False
     except FileNotFoundError:
         logger.error(
             "npx/remotion not found. Make sure Node.js is installed and "

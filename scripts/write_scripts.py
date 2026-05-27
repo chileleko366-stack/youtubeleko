@@ -584,14 +584,30 @@ def generate_complete_manifest(
 # ---------------------------------------------------------------------------
 
 def _download_topics(channel_id: str, date_str: str) -> List[Dict[str, Any]]:
-    """Fetch today's topics JSON from Cloudinary."""
+    """Fetch topics JSON from Cloudinary with retry."""
     cloud_name = os.environ["CLOUDINARY_CLOUD_NAME"]
     public_id = f"automation/topics/{date_str}/{channel_id}"
     url = f"https://res.cloudinary.com/{cloud_name}/raw/upload/{public_id}.json"
-    resp = requests.get(url, timeout=30)
-    resp.raise_for_status()
-    data = resp.json()
-    return data["topics"]
+
+    last_exc: Exception = RuntimeError("no attempts")
+    for attempt in range(1, 4):
+        try:
+            resp = requests.get(url, timeout=30)
+            resp.raise_for_status()
+            data = resp.json()
+            topics = data.get("topics", [])
+            if not topics:
+                raise ValueError(f"Empty topics list in Cloudinary for {channel_id}/{date_str}")
+            return topics
+        except Exception as exc:  # pylint: disable=broad-except
+            last_exc = exc
+            logger.warning(
+                "[%s] Download topics attempt %d/3 failed: %s",
+                channel_id, attempt, exc,
+            )
+            if attempt < 3:
+                time.sleep(attempt * 5)
+    raise RuntimeError(f"[{channel_id}] Failed to download topics after 3 attempts: {last_exc}")
 
 
 def _upload_manifest(channel_id: str, manifest: Dict[str, Any], date_str: str) -> str:
@@ -634,6 +650,8 @@ def main():
             channel_config["_channel_id"] = channel_id
 
             topics = _download_topics(channel_id, date_str)
+            if not topics:
+                raise ValueError(f"No topics returned for {channel_id} on {date_str}")
             topic = topics[0]
             logger.info("[%s] Using topic: %s", channel_id, topic["title"])
 
@@ -645,7 +663,19 @@ def main():
 
         except Exception as exc:  # pylint: disable=broad-except
             logger.error("Script generation failed for %s: %s", channel_id, exc, exc_info=True)
-            results[channel_id] = {"status": "error", "error": str(exc)}
+            # Detect which stage caused the failure from the error message
+            err_str = str(exc)
+            failed_stage = "unknown"
+            for stage_name in ("download_topics", "stage_1", "stage_2", "stage_3",
+                               "stage_4", "stage_5", "stage_6", "stage_7", "upload"):
+                if stage_name in err_str.lower():
+                    failed_stage = stage_name
+                    break
+            results[channel_id] = {
+                "status": "error",
+                "error": err_str,
+                "failed_stage": failed_stage,
+            }
 
     provider_str = ", ".join(sorted(providers_used)) if providers_used else "unknown"
 
@@ -654,10 +684,18 @@ def main():
         if data["status"] == "ok":
             print(f"[{ch_id}] OK – '{data['title']}' → {data['url']}")
         else:
-            print(f"[{ch_id}] ERROR: {data['error']}")
+            stage = data.get("failed_stage", "?")
+            print(f"[{ch_id}] ERROR [{stage}]: {data['error']}")
     print(f"\nAI provider(s) used: {provider_str}")
 
     _write_github_output("ai_provider", provider_str)
+
+    # Send rich Telegram summary with script titles chosen per channel
+    try:
+        from telegram_notify import send_scripts_summary  # pylint: disable=import-outside-toplevel
+        send_scripts_summary(results, date_str, provider_str)
+    except Exception as exc:  # pylint: disable=broad-except
+        logger.warning("Telegram scripts summary failed (non-fatal): %s", exc)
 
     failed = [k for k, v in results.items() if v["status"] == "error"]
     if failed:

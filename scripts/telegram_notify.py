@@ -4,8 +4,9 @@ Telegram bot notifications for pipeline status updates.
 
 import logging
 import os
+import time
 from datetime import date
-from typing import Dict, List, Optional
+from typing import Any, Dict, List, Optional
 
 import requests
 from dotenv import load_dotenv
@@ -14,10 +15,12 @@ load_dotenv()
 logger = logging.getLogger(__name__)
 
 TELEGRAM_API_BASE = "https://api.telegram.org/bot"
+_MAX_RETRIES = 3
+_RETRY_DELAY = 3.0
 
 
 def send_message(text: str, parse_mode: str = "Markdown") -> bool:
-    """Send a Telegram message. Returns True on success."""
+    """Send a Telegram message with retry. Returns True on success."""
     bot_token = os.environ.get("TELEGRAM_BOT_TOKEN")
     chat_id = os.environ.get("TELEGRAM_CHAT_ID")
 
@@ -33,17 +36,19 @@ def send_message(text: str, parse_mode: str = "Markdown") -> bool:
         "disable_web_page_preview": True,
     }
 
-    try:
-        resp = requests.post(url, json=payload, timeout=15)
-        resp.raise_for_status()
-        return True
-    except Exception as exc:
-        logger.error("Telegram send failed: %s", exc)
-        return False
+    for attempt in range(1, _MAX_RETRIES + 1):
+        try:
+            resp = requests.post(url, json=payload, timeout=15)
+            resp.raise_for_status()
+            return True
+        except Exception as exc:
+            logger.error("Telegram send failed (attempt %d/%d): %s", attempt, _MAX_RETRIES, exc)
+            if attempt < _MAX_RETRIES:
+                time.sleep(_RETRY_DELAY * attempt)
+    return False
 
 
 def notify_pipeline_start(pipeline: str, channel_count: int = 5):
-    """Notify that a pipeline has started."""
     today = date.today().isoformat()
     send_message(
         f"🚀 *{pipeline} Pipeline Started*\n"
@@ -53,7 +58,6 @@ def notify_pipeline_start(pipeline: str, channel_count: int = 5):
 
 
 def notify_script_generated(channel_id: str, channel_name: str, title: str, word_count: int):
-    """Notify that a script has been generated."""
     send_message(
         f"📝 *Script Generated*\n"
         f"Channel: {channel_name} (`{channel_id}`)\n"
@@ -63,7 +67,6 @@ def notify_script_generated(channel_id: str, channel_name: str, title: str, word
 
 
 def notify_success(channel_id: str, channel_name: str, title: str, video_id: Optional[str]):
-    """Notify that a video was successfully uploaded."""
     url = f"https://youtu.be/{video_id}" if video_id else "N/A"
     send_message(
         f"✅ *Video Uploaded*\n"
@@ -74,7 +77,6 @@ def notify_success(channel_id: str, channel_name: str, title: str, video_id: Opt
 
 
 def notify_error(channel_id: str, stage: str, error: str):
-    """Notify that an error occurred in a pipeline stage."""
     truncated = error[:300] if len(error) > 300 else error
     send_message(
         f"❌ *Pipeline Error*\n"
@@ -82,6 +84,95 @@ def notify_error(channel_id: str, stage: str, error: str):
         f"Stage: {stage}\n"
         f"Error: `{truncated}`"
     )
+
+
+def send_nightly_summary(results: Dict[str, Any], date_str: str, providers: str) -> None:
+    """
+    Send nightly pipeline summary including chosen topics per channel.
+    results: {ch_id: {"status": "ok"|"error", "topics": [...], "error": "..."}}
+    """
+    ok = [ch for ch, d in results.items() if d.get("status") == "ok"]
+
+    lines = [
+        f"🌙 *Nightly Pipeline — {date_str}*",
+        f"AI: `{providers}` | ✅ {len(ok)}/{len(results)} channels\n",
+    ]
+
+    for ch_id, data in results.items():
+        if data.get("status") == "ok":
+            topics = data.get("topics", [])
+            chosen_title = topics[0].get("title", "N/A") if topics else "N/A"
+            orig = topics[0].get("originality_score", "?") if topics else "?"
+            lines.append(f"*{ch_id.upper()}* ✅")
+            lines.append(f"  📌 _{chosen_title}_ (orig: {orig}/10)")
+            if len(topics) > 1:
+                alt = topics[1].get("title", "")
+                lines.append(f"  ↳ alt: _{alt}_")
+        else:
+            err = str(data.get("error", "unknown"))[:120]
+            lines.append(f"*{ch_id.upper()}* ❌ `{err}`")
+
+    send_message("\n".join(lines))
+
+
+def send_scripts_summary(results: Dict[str, Any], date_str: str, providers: str) -> None:
+    """
+    Send script generation summary with chosen titles per channel.
+    results: {ch_id: {"status": "ok"|"error", "title": "...", "failed_stage": "...", "error": "..."}}
+    """
+    ok = [ch for ch, d in results.items() if d.get("status") == "ok"]
+
+    lines = [
+        f"📝 *Scripts Ready — {date_str}*",
+        f"AI: `{providers}` | ✅ {len(ok)}/{len(results)} channels\n",
+    ]
+
+    for ch_id, data in results.items():
+        if data.get("status") == "ok":
+            title = data.get("title", "N/A")
+            lines.append(f"*{ch_id.upper()}* ✅ _{title}_")
+        else:
+            stage = data.get("failed_stage", "unknown stage")
+            err = str(data.get("error", "unknown"))[:100]
+            lines.append(f"*{ch_id.upper()}* ❌ [{stage}] `{err}`")
+
+    send_message("\n".join(lines))
+
+
+def send_morning_summary(
+    results: Dict[str, Any],
+    date_str: str,
+    fixed: Optional[List[str]] = None,
+) -> None:
+    """
+    Send morning pipeline summary: what worked, what failed, what was auto-fixed.
+    results: {ch_id: {"status": "ok"|"error", "title": "...", "video_id": "...",
+                       "failed_step": "...", "error": "..."}}
+    """
+    ok = [ch for ch, d in results.items() if d.get("status") == "ok"]
+
+    lines = [
+        f"☀️ *Morning Pipeline — {date_str}*",
+        f"✅ {len(ok)}/{len(results)} videos produced\n",
+    ]
+
+    for ch_id, data in results.items():
+        if data.get("status") == "ok":
+            title = data.get("title", "N/A")
+            vid = data.get("video_id")
+            url_note = f" → youtu.be/{vid}" if vid else ""
+            lines.append(f"*{ch_id.upper()}* ✅ _{title}_{url_note}")
+        else:
+            step = data.get("failed_step", "unknown")
+            err = str(data.get("error", "unknown"))[:100]
+            lines.append(f"*{ch_id.upper()}* ❌ [{step}] `{err}`")
+
+    if fixed:
+        lines.append("\n🔧 *Auto-fixed:*")
+        for fix in fixed:
+            lines.append(f"  • {fix}")
+
+    send_message("\n".join(lines))
 
 
 def notify_daily_summary(results: List[Dict]):

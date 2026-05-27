@@ -354,9 +354,11 @@ def assemble_video(
             "-pix_fmt", "yuv420p",
             black_path,
         ]
-        _run_ffmpeg(black_args, f"Black fallback line {ln}")
-        line_clips.append(black_path)
-        per_line_temp.append(black_path)
+        if _run_ffmpeg(black_args, f"Black fallback line {ln}"):
+            line_clips.append(black_path)
+            per_line_temp.append(black_path)
+        else:
+            logger.warning("[%s] Black frame generation failed for line %d — skipping line", channel_id, ln)
 
     if not line_clips:
         logger.error("[%s] No clips available to assemble.", channel_id)
@@ -374,11 +376,13 @@ def assemble_video(
     # Step 2: Mix audio
     mixed_audio = str(temp_dir / "mixed_audio.aac")
     logger.info("[%s] Mixing audio...", channel_id)
-    _mix_audio(voiceover_path, music_path, video_duration, mixed_audio)
+    audio_ok = _mix_audio(voiceover_path, music_path, video_duration, mixed_audio)
+    if not audio_ok:
+        logger.warning("[%s] Audio mixing failed — video will be muxed without audio", channel_id)
 
     # Step 3: Mux video + audio
     logger.info("[%s] Muxing final video → %s", channel_id, output_path)
-    if Path(mixed_audio).exists():
+    if audio_ok and Path(mixed_audio).exists():
         mux_args = [
             "-i", concat_video,
             "-i", mixed_audio,

@@ -114,25 +114,32 @@ async def generate_voiceover(
     # Normalise: ensure the value ends with 'Hz' if numeric
     pitch_norm = pitch if pitch.endswith("Hz") else f"{pitch}Hz"
 
-    try:
-        communicate = edge_tts.Communicate(
-            text=script_text,
-            voice=voice,
-            rate=rate,
-            pitch=pitch_norm,
-        )
-        await communicate.save(str(output))
-        logger.info(
-            "Voiceover saved: %s (voice=%s rate=%s pitch=%s)",
-            output_path,
-            voice,
-            rate,
-            pitch,
-        )
-        return True
-    except Exception as exc:  # pylint: disable=broad-except
-        logger.error("Failed to generate voiceover for %s: %s", output_path, exc)
-        return False
+    for attempt in range(1, 4):
+        try:
+            communicate = edge_tts.Communicate(
+                text=script_text,
+                voice=voice,
+                rate=rate,
+                pitch=pitch_norm,
+            )
+            await communicate.save(str(output))
+            logger.info(
+                "Voiceover saved: %s (voice=%s rate=%s pitch=%s)",
+                output_path,
+                voice,
+                rate,
+                pitch,
+            )
+            return True
+        except Exception as exc:  # pylint: disable=broad-except
+            logger.warning(
+                "Voiceover attempt %d/3 failed for %s: %s",
+                attempt, output_path, exc,
+            )
+            if attempt < 3:
+                await asyncio.sleep(attempt * 2)
+    logger.error("All 3 voiceover attempts failed for %s", output_path)
+    return False
 
 
 async def _generate_line_voiceover(

@@ -128,16 +128,24 @@ jobs:
         run: |
           STATUS="${{ job.status }}"
           python - <<PYEOF
-          import os
+          import json, os
           from datetime import date
+          from pathlib import Path
           from scripts.telegram_notify import send_message
           from scripts.email_notify import notify_pipeline_success, notify_pipeline_failure
           status = "${STATUS}"
           icon = "✅" if status == "success" else "❌"
           date_str = date.today().isoformat()
-          send_message(f"{icon} *Morning Pipeline* — CH1 Dopamine Loop {status} ({date_str})")
+          title = ""
+          try:
+              manifest = json.loads(Path("temp/manifests/ch1.json").read_text())
+              title = manifest.get("metadata", {}).get("title", "") or manifest.get("topic", {}).get("title", "")
+          except Exception:
+              pass
+          title_note = f" — _{title}_" if title else ""
+          send_message(f"{icon} *CH1 Dopamine Loop* {status}{title_note} ({date_str})")
           if status == "success":
-              notify_pipeline_success("Morning — CH1", date_str, "")
+              notify_pipeline_success("Morning — CH1", date_str, title)
           else:
               notify_pipeline_failure("Morning — CH1", date_str, f"Job status: {status}")
           PYEOF
@@ -258,16 +266,24 @@ jobs:
         run: |
           STATUS="${{ job.status }}"
           python - <<PYEOF
-          import os
+          import json, os
           from datetime import date
+          from pathlib import Path
           from scripts.telegram_notify import send_message
           from scripts.email_notify import notify_pipeline_success, notify_pipeline_failure
           status = "${STATUS}"
           icon = "✅" if status == "success" else "❌"
           date_str = date.today().isoformat()
-          send_message(f"{icon} *Morning Pipeline* — CH2 FinanceFiction {status} ({date_str})")
+          title = ""
+          try:
+              manifest = json.loads(Path("temp/manifests/ch2.json").read_text())
+              title = manifest.get("metadata", {}).get("title", "") or manifest.get("topic", {}).get("title", "")
+          except Exception:
+              pass
+          title_note = f" — _{title}_" if title else ""
+          send_message(f"{icon} *CH2 FinanceFiction* {status}{title_note} ({date_str})")
           if status == "success":
-              notify_pipeline_success("Morning — CH2", date_str, "")
+              notify_pipeline_success("Morning — CH2", date_str, title)
           else:
               notify_pipeline_failure("Morning — CH2", date_str, f"Job status: {status}")
           PYEOF
@@ -388,16 +404,24 @@ jobs:
         run: |
           STATUS="${{ job.status }}"
           python - <<PYEOF
-          import os
+          import json, os
           from datetime import date
+          from pathlib import Path
           from scripts.telegram_notify import send_message
           from scripts.email_notify import notify_pipeline_success, notify_pipeline_failure
           status = "${STATUS}"
           icon = "✅" if status == "success" else "❌"
           date_str = date.today().isoformat()
-          send_message(f"{icon} *Morning Pipeline* — CH3 Redacted {status} ({date_str})")
+          title = ""
+          try:
+              manifest = json.loads(Path("temp/manifests/ch3.json").read_text())
+              title = manifest.get("metadata", {}).get("title", "") or manifest.get("topic", {}).get("title", "")
+          except Exception:
+              pass
+          title_note = f" — _{title}_" if title else ""
+          send_message(f"{icon} *CH3 Redacted* {status}{title_note} ({date_str})")
           if status == "success":
-              notify_pipeline_success("Morning — CH3", date_str, "")
+              notify_pipeline_success("Morning — CH3", date_str, title)
           else:
               notify_pipeline_failure("Morning — CH3", date_str, f"Job status: {status}")
           PYEOF
@@ -518,16 +542,24 @@ jobs:
         run: |
           STATUS="${{ job.status }}"
           python - <<PYEOF
-          import os
+          import json, os
           from datetime import date
+          from pathlib import Path
           from scripts.telegram_notify import send_message
           from scripts.email_notify import notify_pipeline_success, notify_pipeline_failure
           status = "${STATUS}"
           icon = "✅" if status == "success" else "❌"
           date_str = date.today().isoformat()
-          send_message(f"{icon} *Morning Pipeline* — CH4 The Grey Matter {status} ({date_str})")
+          title = ""
+          try:
+              manifest = json.loads(Path("temp/manifests/ch4.json").read_text())
+              title = manifest.get("metadata", {}).get("title", "") or manifest.get("topic", {}).get("title", "")
+          except Exception:
+              pass
+          title_note = f" — _{title}_" if title else ""
+          send_message(f"{icon} *CH4 The Grey Matter* {status}{title_note} ({date_str})")
           if status == "success":
-              notify_pipeline_success("Morning — CH4", date_str, "")
+              notify_pipeline_success("Morning — CH4", date_str, title)
           else:
               notify_pipeline_failure("Morning — CH4", date_str, f"Job status: {status}")
           PYEOF
@@ -648,16 +680,24 @@ jobs:
         run: |
           STATUS="${{ job.status }}"
           python - <<PYEOF
-          import os
+          import json, os
           from datetime import date
+          from pathlib import Path
           from scripts.telegram_notify import send_message
           from scripts.email_notify import notify_pipeline_success, notify_pipeline_failure
           status = "${STATUS}"
           icon = "✅" if status == "success" else "❌"
           date_str = date.today().isoformat()
-          send_message(f"{icon} *Morning Pipeline* — CH5 The Quiet Record {status} ({date_str})")
+          title = ""
+          try:
+              manifest = json.loads(Path("temp/manifests/ch5.json").read_text())
+              title = manifest.get("metadata", {}).get("title", "") or manifest.get("topic", {}).get("title", "")
+          except Exception:
+              pass
+          title_note = f" — _{title}_" if title else ""
+          send_message(f"{icon} *CH5 The Quiet Record* {status}{title_note} ({date_str})")
           if status == "success":
-              notify_pipeline_success("Morning — CH5", date_str, "")
+              notify_pipeline_success("Morning — CH5", date_str, title)
           else:
               notify_pipeline_failure("Morning — CH5", date_str, f"Job status: {status}")
           PYEOF
