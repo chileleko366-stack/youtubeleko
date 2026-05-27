@@ -690,12 +690,12 @@ def main():
 
     _write_github_output("ai_provider", provider_str)
 
-    # Send rich Telegram summary with script titles chosen per channel
+    # Send rich email summary with script titles chosen per channel
     try:
-        from telegram_notify import send_scripts_summary  # pylint: disable=import-outside-toplevel
+        from email_notify import send_scripts_summary  # pylint: disable=import-outside-toplevel
         send_scripts_summary(results, date_str, provider_str)
     except Exception as exc:  # pylint: disable=broad-except
-        logger.warning("Telegram scripts summary failed (non-fatal): %s", exc)
+        logger.warning("Email scripts summary failed (non-fatal): %s", exc)
 
     failed = [k for k, v in results.items() if v["status"] == "error"]
     if failed:

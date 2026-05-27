@@ -219,12 +219,12 @@ def main():
     # Expose for GitHub Actions downstream steps
     _write_github_output("ai_provider", provider_str)
 
-    # Send rich Telegram summary with topics chosen per channel
+    # Send rich email summary with topics chosen per channel
     try:
-        from telegram_notify import send_nightly_summary  # pylint: disable=import-outside-toplevel
+        from email_notify import send_nightly_summary  # pylint: disable=import-outside-toplevel
         send_nightly_summary(results, date_str, provider_str)
     except Exception as exc:  # pylint: disable=broad-except
-        logger.warning("Telegram topic summary failed (non-fatal): %s", exc)
+        logger.warning("Email nightly summary failed (non-fatal): %s", exc)
 
     failed = [k for k, v in results.items() if v["status"] == "error"]
     if failed:
