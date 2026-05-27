@@ -19,6 +19,8 @@ logger = logging.getLogger(__name__)
 
 DRIVE_SCOPES = ["https://www.googleapis.com/auth/drive.file"]
 ROOT_FOLDER_NAME = "YouTube Automation Backups"
+# Share the root folder with this email on first creation so files appear in personal Drive
+DRIVE_OWNER_EMAIL = os.environ.get("DRIVE_OWNER_EMAIL") or os.environ.get("GMAIL_TO")
 
 
 def _build_drive_client():
@@ -31,6 +33,21 @@ def _build_drive_client():
         creds_dict, scopes=DRIVE_SCOPES
     )
     return build("drive", "v3", credentials=credentials, cache_discovery=False)
+
+
+def _share_with_owner(service, folder_id: str, email: str) -> None:
+    """Share a Drive folder with the owner's personal Google account."""
+    try:
+        service.permissions().create(
+            fileId=folder_id,
+            body={"type": "user", "role": "writer", "emailAddress": email},
+            fields="id",
+            sendNotificationEmail=False,
+        ).execute()
+        logger.info("Drive root folder shared with %s", email)
+    except Exception as exc:
+        # 409 means permission already exists — that's fine
+        logger.debug("Drive share attempt for %s: %s", email, exc)
 
 
 def _get_or_create_folder(service, name: str, parent_id: Optional[str] = None) -> str:
@@ -75,6 +92,8 @@ def backup_to_drive(
         service = _build_drive_client()
 
         root_id = _get_or_create_folder(service, ROOT_FOLDER_NAME)
+        if DRIVE_OWNER_EMAIL:
+            _share_with_owner(service, root_id, DRIVE_OWNER_EMAIL)
         channel_folder_id = _get_or_create_folder(service, channel_id.upper(), root_id)
         date_folder_id = _get_or_create_folder(service, date_str, channel_folder_id)
 
