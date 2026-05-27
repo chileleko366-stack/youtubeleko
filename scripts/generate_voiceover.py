@@ -56,6 +56,12 @@ CHANNEL_VOICE_SETTINGS: Dict[str, Dict[str, Any]] = {
         "pitch": "-1Hz",
         "narrator_mode": True,
     },
+    "ch6": {
+        "voice": "en-US-ChristopherNeural",
+        "rate": "-5%",
+        "pitch": "-2Hz",
+        "narrator_mode": True,
+    },
 }
 
 

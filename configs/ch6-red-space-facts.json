@@ -1,0 +1,47 @@
+{
+  "channel_id": "CH6",
+  "channel_name": "RED SPACE FACTS",
+  "niche": "Space science / Astronomy / Cosmic phenomena",
+  "audience": "Science enthusiasts 18-45",
+  "length_minutes_min": 8,
+  "length_minutes_max": 15,
+  "word_count": 1500,
+  "brand_color": "#ff2222",
+  "background_color": "#04000f",
+  "posting_schedule": {
+    "days": ["Monday", "Thursday"],
+    "time_utc": "18:00"
+  },
+  "narrator_mode": true,
+  "tts_voice": "en-US-ChristopherNeural",
+  "tts_rate": "-5%",
+  "tts_pitch": "-2Hz",
+  "speech_rate": "-5%",
+  "pitch": "-2Hz",
+  "shorts": {
+    "word_count": 150,
+    "duration_seconds": 60,
+    "aspect_ratio": "9:16",
+    "width": 1080,
+    "height": 1920
+  },
+  "visual_style": {
+    "aesthetic": "Dark cosmic, deep space, film grain 10-14%, red accent, cinematic",
+    "film_grain_min": 10,
+    "film_grain_max": 14,
+    "font_primary": "Orbitron",
+    "font_secondary": "Exo 2",
+    "thumbnail_style": "Dark space background, red accented title, planetary or nebula imagery",
+    "intro": "Red particle logo reveal with space ambient sound",
+    "outro": "Subscribe prompt with red pulsing button"
+  },
+  "content_strategy": {
+    "script_structure": "hook → cosmic context → scientific fact → mind-expanding implication → CTA",
+    "hook_style": "An impossible-sounding fact about space that is completely true"
+  },
+  "forbidden_words": ["amazing", "insane", "crazy", "literally", "mind-blowing"],
+  "forbidden_topics": ["astrology", "UFO conspiracy theories", "flat earth", "pseudoscience"],
+  "reference_channels": ["Kurzgesagt", "PBS Space Time", "Anton Petrov"],
+  "music_style": "Ambient space, cinematic orchestral, dark electronic",
+  "b_roll_intensity": 70
+}

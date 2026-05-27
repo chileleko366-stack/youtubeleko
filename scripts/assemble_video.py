@@ -41,6 +41,7 @@ CHANNEL_GRAIN_SETTINGS: Dict[str, Dict[str, Any]] = {
     "ch3": {"grain": 0.16, "vhs_effect": False, "crt_effect": False},
     "ch4": {"grain": 0.09, "vhs_effect": False, "crt_effect": False},
     "ch5": {"grain": 0.07, "vhs_effect": False, "crt_effect": False},
+    "ch6": {"grain": 0.12, "vhs_effect": False, "crt_effect": False},
 }
 
 # Music tracks mapped by channel (use free/royalty-free asset paths or Cloudinary URLs)
@@ -50,6 +51,7 @@ MUSIC_STYLE: Dict[str, str] = {
     "ch3": "dark_cinematic_tense",
     "ch4": "ambient_contemplative",
     "ch5": "orchestral_documentary",
+    "ch6": "ambient_space_cinematic",
 }
 
 
