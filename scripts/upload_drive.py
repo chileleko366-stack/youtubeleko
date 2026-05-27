@@ -6,6 +6,7 @@ import base64
 import json
 import logging
 import os
+import time
 from pathlib import Path
 from typing import Optional
 
@@ -71,37 +72,76 @@ def backup_to_drive(
         logger.error("File not found for Drive backup: %s", file_path)
         return None
 
-    try:
-        service = _build_drive_client()
+    for attempt in range(1, 4):
+        try:
+            service = _build_drive_client()
 
-        root_id = _get_or_create_folder(service, ROOT_FOLDER_NAME)
-        channel_folder_id = _get_or_create_folder(service, channel_id.upper(), root_id)
-        date_folder_id = _get_or_create_folder(service, date_str, channel_folder_id)
+            root_id = _get_or_create_folder(service, ROOT_FOLDER_NAME)
+            channel_folder_id = _get_or_create_folder(service, channel_id.upper(), root_id)
+            date_folder_id = _get_or_create_folder(service, date_str, channel_folder_id)
 
-        file_name = Path(file_path).name
-        file_metadata = {
-            "name": file_name,
-            "parents": [date_folder_id],
-        }
+            file_name = Path(file_path).name
+            file_metadata = {
+                "name": file_name,
+                "parents": [date_folder_id],
+            }
 
-        mime = "video/mp4" if file_path.endswith(".mp4") else "application/octet-stream"
-        media = MediaFileUpload(file_path, mimetype=mime, resumable=True, chunksize=5 * 1024 * 1024)
+            mime = "video/mp4" if file_path.endswith(".mp4") else "application/octet-stream"
+            media = MediaFileUpload(file_path, mimetype=mime, resumable=True, chunksize=5 * 1024 * 1024)
 
-        file_obj = (
-            service.files()
-            .create(body=file_metadata, media_body=media, fields="id, name, size")
-            .execute()
-        )
+            file_obj = (
+                service.files()
+                .create(body=file_metadata, media_body=media, fields="id, name, size")
+                .execute()
+            )
 
-        logger.info(
-            "[%s] Backed up to Drive: %s (id=%s, size=%s bytes)",
-            channel_id,
-            file_obj.get("name"),
-            file_obj.get("id"),
-            file_obj.get("size"),
-        )
-        return file_obj.get("id")
+            logger.info(
+                "[%s] Backed up to Drive: %s (id=%s, size=%s bytes)",
+                channel_id,
+                file_obj.get("name"),
+                file_obj.get("id"),
+                file_obj.get("size"),
+            )
+            return file_obj.get("id")
 
-    except Exception as exc:
-        logger.error("[%s] Drive backup failed for %s: %s", channel_id, file_path, exc)
-        return None
+        except Exception as exc:
+            logger.error(
+                "[%s] Drive backup attempt %d/3 failed for %s: %s",
+                channel_id, attempt, file_path, exc,
+            )
+            if attempt < 3:
+                time.sleep(attempt * 10)
+    return None
+
+
+if __name__ == "__main__":
+    import glob
+    import sys
+
+    logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(name)s: %(message)s")
+
+    if len(sys.argv) < 2:
+        print("Usage: python upload_drive.py <manifest.json>")
+        sys.exit(1)
+
+    with open(sys.argv[1], "r", encoding="utf-8") as fh:
+        manifest = json.load(fh)
+
+    ch_id = manifest.get("channel_id", "unknown")
+    date_str = manifest.get("date") or __import__("datetime").date.today().isoformat()
+
+    # Find the assembled video in temp/output/
+    candidates = sorted(glob.glob(f"temp/output/{ch_id}_*.mp4"))
+    if not candidates:
+        logger.error("No assembled video found in temp/output/ for %s — skipping Drive upload", ch_id)
+        sys.exit(0)
+
+    video_path = candidates[-1]
+    logger.info("Uploading to Drive: %s", video_path)
+    file_id = backup_to_drive(video_path, ch_id, date_str)
+    if file_id:
+        print(f"Drive upload complete: {Path(video_path).name} (id={file_id})")
+        sys.exit(0)
+    else:
+        print(f"ERROR: Drive upload failed for {video_path}")
+        sys.exit(1)

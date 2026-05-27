@@ -10,6 +10,10 @@ on:
         description: "Comma-separated channel IDs to run (e.g. ch1,ch3) or 'all'"
         required: false
         default: "all"
+      date_override:
+        description: "Manifest date to use (YYYY-MM-DD). Defaults to today. Use yesterday's date if nightly ran before the date-fix was deployed."
+        required: false
+        default: ""
 
 env:
   PYTHONPATH: ${{ github.workspace }}
@@ -25,6 +29,8 @@ jobs:
     continue-on-error: true
     permissions:
       contents: read
+    outputs:
+      title: ${{ steps.export_result.outputs.title }}
 
     steps:
       - name: Checkout repository
@@ -41,7 +47,7 @@ jobs:
         with:
           node-version: "20"
           cache: npm
-          cache-dependency-path: remotion/package.json
+          cache-dependency-path: remotion/package-lock.json
 
       - name: Install FFmpeg
         run: sudo apt-get update -qq && sudo apt-get install -y ffmpeg
@@ -64,7 +70,7 @@ jobs:
               api_secret=os.environ["CLOUDINARY_API_SECRET"],
               secure=True,
           )
-          date_str = date.today().isoformat()
+          date_str = os.environ.get("DATE_OVERRIDE") or date.today().isoformat()
           public_id = f"automation/manifests/{date_str}/ch1"
           result = cloudinary.api.resource(public_id, resource_type="raw")
           Path("temp/manifests").mkdir(parents=True, exist_ok=True)
@@ -75,6 +81,7 @@ jobs:
           CLOUDINARY_CLOUD_NAME: ${{ secrets.CLOUDINARY_CLOUD_NAME }}
           CLOUDINARY_API_KEY: ${{ secrets.CLOUDINARY_API_KEY }}
           CLOUDINARY_API_SECRET: ${{ secrets.CLOUDINARY_API_SECRET }}
+          DATE_OVERRIDE: ${{ inputs.date_override }}
 
       - name: Notify CH1 production start
         run: |
@@ -118,21 +125,50 @@ jobs:
           GOOGLE_DRIVE_CREDENTIALS: ${{ secrets.GOOGLE_DRIVE_CREDENTIALS }}
         continue-on-error: true
 
+      - name: Export result
+        id: export_result
+        if: always()
+        run: |
+          python - <<'PYEOF'
+          import json, os
+          from pathlib import Path
+          title = "unknown"
+          try:
+              data = json.loads(Path("temp/manifests/ch1.json").read_text())
+              title = (data.get("metadata", {}).get("title", "")
+                       or data.get("topic", {}).get("title", "")
+                       or "unknown")
+          except Exception:
+              pass
+          out = os.environ.get("GITHUB_OUTPUT", "")
+          if out:
+              with open(out, "a") as f:
+                  f.write(f"title={title}\n")
+          PYEOF
+
       - name: Notify CH1 complete
         if: always()
         run: |
           STATUS="${{ job.status }}"
           python - <<PYEOF
-          import os
+          import json, os
           from datetime import date
+          from pathlib import Path
           from scripts.telegram_notify import send_message
           from scripts.email_notify import notify_pipeline_success, notify_pipeline_failure
           status = "${STATUS}"
           icon = "✅" if status == "success" else "❌"
           date_str = date.today().isoformat()
-          send_message(f"{icon} *Morning Pipeline* — CH1 Dopamine Loop {status} ({date_str})")
+          title = ""
+          try:
+              manifest = json.loads(Path("temp/manifests/ch1.json").read_text())
+              title = manifest.get("metadata", {}).get("title", "") or manifest.get("topic", {}).get("title", "")
+          except Exception:
+              pass
+          title_note = f" — _{title}_" if title else ""
+          send_message(f"{icon} *CH1 Dopamine Loop* {status}{title_note} ({date_str})")
           if status == "success":
-              notify_pipeline_success("Morning — CH1", date_str, "")
+              notify_pipeline_success("Morning — CH1", date_str, title)
           else:
               notify_pipeline_failure("Morning — CH1", date_str, f"Job status: {status}")
           PYEOF
@@ -154,6 +190,8 @@ jobs:
     continue-on-error: true
     permissions:
       contents: read
+    outputs:
+      title: ${{ steps.export_result.outputs.title }}
 
     steps:
       - name: Checkout repository
@@ -170,7 +208,7 @@ jobs:
         with:
           node-version: "20"
           cache: npm
-          cache-dependency-path: remotion/package.json
+          cache-dependency-path: remotion/package-lock.json
 
       - name: Install FFmpeg
         run: sudo apt-get update -qq && sudo apt-get install -y ffmpeg
@@ -193,7 +231,7 @@ jobs:
               api_secret=os.environ["CLOUDINARY_API_SECRET"],
               secure=True,
           )
-          date_str = date.today().isoformat()
+          date_str = os.environ.get("DATE_OVERRIDE") or date.today().isoformat()
           public_id = f"automation/manifests/{date_str}/ch2"
           result = cloudinary.api.resource(public_id, resource_type="raw")
           Path("temp/manifests").mkdir(parents=True, exist_ok=True)
@@ -204,6 +242,7 @@ jobs:
           CLOUDINARY_CLOUD_NAME: ${{ secrets.CLOUDINARY_CLOUD_NAME }}
           CLOUDINARY_API_KEY: ${{ secrets.CLOUDINARY_API_KEY }}
           CLOUDINARY_API_SECRET: ${{ secrets.CLOUDINARY_API_SECRET }}
+          DATE_OVERRIDE: ${{ inputs.date_override }}
 
       - name: Notify CH2 production start
         run: |
@@ -247,21 +286,50 @@ jobs:
           GOOGLE_DRIVE_CREDENTIALS: ${{ secrets.GOOGLE_DRIVE_CREDENTIALS }}
         continue-on-error: true
 
+      - name: Export result
+        id: export_result
+        if: always()
+        run: |
+          python - <<'PYEOF'
+          import json, os
+          from pathlib import Path
+          title = "unknown"
+          try:
+              data = json.loads(Path("temp/manifests/ch2.json").read_text())
+              title = (data.get("metadata", {}).get("title", "")
+                       or data.get("topic", {}).get("title", "")
+                       or "unknown")
+          except Exception:
+              pass
+          out = os.environ.get("GITHUB_OUTPUT", "")
+          if out:
+              with open(out, "a") as f:
+                  f.write(f"title={title}\n")
+          PYEOF
+
       - name: Notify CH2 complete
         if: always()
         run: |
           STATUS="${{ job.status }}"
           python - <<PYEOF
-          import os
+          import json, os
           from datetime import date
+          from pathlib import Path
           from scripts.telegram_notify import send_message
           from scripts.email_notify import notify_pipeline_success, notify_pipeline_failure
           status = "${STATUS}"
           icon = "✅" if status == "success" else "❌"
           date_str = date.today().isoformat()
-          send_message(f"{icon} *Morning Pipeline* — CH2 FinanceFiction {status} ({date_str})")
+          title = ""
+          try:
+              manifest = json.loads(Path("temp/manifests/ch2.json").read_text())
+              title = manifest.get("metadata", {}).get("title", "") or manifest.get("topic", {}).get("title", "")
+          except Exception:
+              pass
+          title_note = f" — _{title}_" if title else ""
+          send_message(f"{icon} *CH2 FinanceFiction* {status}{title_note} ({date_str})")
           if status == "success":
-              notify_pipeline_success("Morning — CH2", date_str, "")
+              notify_pipeline_success("Morning — CH2", date_str, title)
           else:
               notify_pipeline_failure("Morning — CH2", date_str, f"Job status: {status}")
           PYEOF
@@ -283,6 +351,8 @@ jobs:
     continue-on-error: true
     permissions:
       contents: read
+    outputs:
+      title: ${{ steps.export_result.outputs.title }}
 
     steps:
       - name: Checkout repository
@@ -299,7 +369,7 @@ jobs:
         with:
           node-version: "20"
           cache: npm
-          cache-dependency-path: remotion/package.json
+          cache-dependency-path: remotion/package-lock.json
 
       - name: Install FFmpeg
         run: sudo apt-get update -qq && sudo apt-get install -y ffmpeg
@@ -322,7 +392,7 @@ jobs:
               api_secret=os.environ["CLOUDINARY_API_SECRET"],
               secure=True,
           )
-          date_str = date.today().isoformat()
+          date_str = os.environ.get("DATE_OVERRIDE") or date.today().isoformat()
           public_id = f"automation/manifests/{date_str}/ch3"
           result = cloudinary.api.resource(public_id, resource_type="raw")
           Path("temp/manifests").mkdir(parents=True, exist_ok=True)
@@ -333,6 +403,7 @@ jobs:
           CLOUDINARY_CLOUD_NAME: ${{ secrets.CLOUDINARY_CLOUD_NAME }}
           CLOUDINARY_API_KEY: ${{ secrets.CLOUDINARY_API_KEY }}
           CLOUDINARY_API_SECRET: ${{ secrets.CLOUDINARY_API_SECRET }}
+          DATE_OVERRIDE: ${{ inputs.date_override }}
 
       - name: Notify CH3 production start
         run: |
@@ -376,21 +447,50 @@ jobs:
           GOOGLE_DRIVE_CREDENTIALS: ${{ secrets.GOOGLE_DRIVE_CREDENTIALS }}
         continue-on-error: true
 
+      - name: Export result
+        id: export_result
+        if: always()
+        run: |
+          python - <<'PYEOF'
+          import json, os
+          from pathlib import Path
+          title = "unknown"
+          try:
+              data = json.loads(Path("temp/manifests/ch3.json").read_text())
+              title = (data.get("metadata", {}).get("title", "")
+                       or data.get("topic", {}).get("title", "")
+                       or "unknown")
+          except Exception:
+              pass
+          out = os.environ.get("GITHUB_OUTPUT", "")
+          if out:
+              with open(out, "a") as f:
+                  f.write(f"title={title}\n")
+          PYEOF
+
       - name: Notify CH3 complete
         if: always()
         run: |
           STATUS="${{ job.status }}"
           python - <<PYEOF
-          import os
+          import json, os
           from datetime import date
+          from pathlib import Path
           from scripts.telegram_notify import send_message
           from scripts.email_notify import notify_pipeline_success, notify_pipeline_failure
           status = "${STATUS}"
           icon = "✅" if status == "success" else "❌"
           date_str = date.today().isoformat()
-          send_message(f"{icon} *Morning Pipeline* — CH3 Redacted {status} ({date_str})")
+          title = ""
+          try:
+              manifest = json.loads(Path("temp/manifests/ch3.json").read_text())
+              title = manifest.get("metadata", {}).get("title", "") or manifest.get("topic", {}).get("title", "")
+          except Exception:
+              pass
+          title_note = f" — _{title}_" if title else ""
+          send_message(f"{icon} *CH3 Redacted* {status}{title_note} ({date_str})")
           if status == "success":
-              notify_pipeline_success("Morning — CH3", date_str, "")
+              notify_pipeline_success("Morning — CH3", date_str, title)
           else:
               notify_pipeline_failure("Morning — CH3", date_str, f"Job status: {status}")
           PYEOF
@@ -412,6 +512,8 @@ jobs:
     continue-on-error: true
     permissions:
       contents: read
+    outputs:
+      title: ${{ steps.export_result.outputs.title }}
 
     steps:
       - name: Checkout repository
@@ -428,7 +530,7 @@ jobs:
         with:
           node-version: "20"
           cache: npm
-          cache-dependency-path: remotion/package.json
+          cache-dependency-path: remotion/package-lock.json
 
       - name: Install FFmpeg
         run: sudo apt-get update -qq && sudo apt-get install -y ffmpeg
@@ -451,7 +553,7 @@ jobs:
               api_secret=os.environ["CLOUDINARY_API_SECRET"],
               secure=True,
           )
-          date_str = date.today().isoformat()
+          date_str = os.environ.get("DATE_OVERRIDE") or date.today().isoformat()
           public_id = f"automation/manifests/{date_str}/ch4"
           result = cloudinary.api.resource(public_id, resource_type="raw")
           Path("temp/manifests").mkdir(parents=True, exist_ok=True)
@@ -462,6 +564,7 @@ jobs:
           CLOUDINARY_CLOUD_NAME: ${{ secrets.CLOUDINARY_CLOUD_NAME }}
           CLOUDINARY_API_KEY: ${{ secrets.CLOUDINARY_API_KEY }}
           CLOUDINARY_API_SECRET: ${{ secrets.CLOUDINARY_API_SECRET }}
+          DATE_OVERRIDE: ${{ inputs.date_override }}
 
       - name: Notify CH4 production start
         run: |
@@ -505,21 +608,50 @@ jobs:
           GOOGLE_DRIVE_CREDENTIALS: ${{ secrets.GOOGLE_DRIVE_CREDENTIALS }}
         continue-on-error: true
 
+      - name: Export result
+        id: export_result
+        if: always()
+        run: |
+          python - <<'PYEOF'
+          import json, os
+          from pathlib import Path
+          title = "unknown"
+          try:
+              data = json.loads(Path("temp/manifests/ch4.json").read_text())
+              title = (data.get("metadata", {}).get("title", "")
+                       or data.get("topic", {}).get("title", "")
+                       or "unknown")
+          except Exception:
+              pass
+          out = os.environ.get("GITHUB_OUTPUT", "")
+          if out:
+              with open(out, "a") as f:
+                  f.write(f"title={title}\n")
+          PYEOF
+
       - name: Notify CH4 complete
         if: always()
         run: |
           STATUS="${{ job.status }}"
           python - <<PYEOF
-          import os
+          import json, os
           from datetime import date
+          from pathlib import Path
           from scripts.telegram_notify import send_message
           from scripts.email_notify import notify_pipeline_success, notify_pipeline_failure
           status = "${STATUS}"
           icon = "✅" if status == "success" else "❌"
           date_str = date.today().isoformat()
-          send_message(f"{icon} *Morning Pipeline* — CH4 The Grey Matter {status} ({date_str})")
+          title = ""
+          try:
+              manifest = json.loads(Path("temp/manifests/ch4.json").read_text())
+              title = manifest.get("metadata", {}).get("title", "") or manifest.get("topic", {}).get("title", "")
+          except Exception:
+              pass
+          title_note = f" — _{title}_" if title else ""
+          send_message(f"{icon} *CH4 The Grey Matter* {status}{title_note} ({date_str})")
           if status == "success":
-              notify_pipeline_success("Morning — CH4", date_str, "")
+              notify_pipeline_success("Morning — CH4", date_str, title)
           else:
               notify_pipeline_failure("Morning — CH4", date_str, f"Job status: {status}")
           PYEOF
@@ -541,6 +673,8 @@ jobs:
     continue-on-error: true
     permissions:
       contents: read
+    outputs:
+      title: ${{ steps.export_result.outputs.title }}
 
     steps:
       - name: Checkout repository
@@ -557,7 +691,7 @@ jobs:
         with:
           node-version: "20"
           cache: npm
-          cache-dependency-path: remotion/package.json
+          cache-dependency-path: remotion/package-lock.json
 
       - name: Install FFmpeg
         run: sudo apt-get update -qq && sudo apt-get install -y ffmpeg
@@ -580,7 +714,7 @@ jobs:
               api_secret=os.environ["CLOUDINARY_API_SECRET"],
               secure=True,
           )
-          date_str = date.today().isoformat()
+          date_str = os.environ.get("DATE_OVERRIDE") or date.today().isoformat()
           public_id = f"automation/manifests/{date_str}/ch5"
           result = cloudinary.api.resource(public_id, resource_type="raw")
           Path("temp/manifests").mkdir(parents=True, exist_ok=True)
@@ -591,6 +725,7 @@ jobs:
           CLOUDINARY_CLOUD_NAME: ${{ secrets.CLOUDINARY_CLOUD_NAME }}
           CLOUDINARY_API_KEY: ${{ secrets.CLOUDINARY_API_KEY }}
           CLOUDINARY_API_SECRET: ${{ secrets.CLOUDINARY_API_SECRET }}
+          DATE_OVERRIDE: ${{ inputs.date_override }}
 
       - name: Notify CH5 production start
         run: |
@@ -634,21 +769,50 @@ jobs:
           GOOGLE_DRIVE_CREDENTIALS: ${{ secrets.GOOGLE_DRIVE_CREDENTIALS }}
         continue-on-error: true
 
+      - name: Export result
+        id: export_result
+        if: always()
+        run: |
+          python - <<'PYEOF'
+          import json, os
+          from pathlib import Path
+          title = "unknown"
+          try:
+              data = json.loads(Path("temp/manifests/ch5.json").read_text())
+              title = (data.get("metadata", {}).get("title", "")
+                       or data.get("topic", {}).get("title", "")
+                       or "unknown")
+          except Exception:
+              pass
+          out = os.environ.get("GITHUB_OUTPUT", "")
+          if out:
+              with open(out, "a") as f:
+                  f.write(f"title={title}\n")
+          PYEOF
+
       - name: Notify CH5 complete
         if: always()
         run: |
           STATUS="${{ job.status }}"
           python - <<PYEOF
-          import os
+          import json, os
           from datetime import date
+          from pathlib import Path
           from scripts.telegram_notify import send_message
           from scripts.email_notify import notify_pipeline_success, notify_pipeline_failure
           status = "${STATUS}"
           icon = "✅" if status == "success" else "❌"
           date_str = date.today().isoformat()
-          send_message(f"{icon} *Morning Pipeline* — CH5 The Quiet Record {status} ({date_str})")
+          title = ""
+          try:
+              manifest = json.loads(Path("temp/manifests/ch5.json").read_text())
+              title = manifest.get("metadata", {}).get("title", "") or manifest.get("topic", {}).get("title", "")
+          except Exception:
+              pass
+          title_note = f" — _{title}_" if title else ""
+          send_message(f"{icon} *CH5 The Quiet Record* {status}{title_note} ({date_str})")
           if status == "success":
-              notify_pipeline_success("Morning — CH5", date_str, "")
+              notify_pipeline_success("Morning — CH5", date_str, title)
           else:
               notify_pipeline_failure("Morning — CH5", date_str, f"Job status: {status}")
           PYEOF
@@ -685,18 +849,56 @@ jobs:
       - name: Install Python dependencies
         run: pip install -r requirements.txt
 
-      - name: Send daily summary
+      - name: Send detailed morning summary email
+        if: always()
         run: |
-          python - <<'PYEOF'
-          from scripts.telegram_notify import send_message
-          from scripts.email_notify import notify_pipeline_success
+          CH1_STATUS="${{ needs.produce-ch1.result }}"
+          CH2_STATUS="${{ needs.produce-ch2.result }}"
+          CH3_STATUS="${{ needs.produce-ch3.result }}"
+          CH4_STATUS="${{ needs.produce-ch4.result }}"
+          CH5_STATUS="${{ needs.produce-ch5.result }}"
+          CH1_TITLE="${{ needs.produce-ch1.outputs.title }}"
+          CH2_TITLE="${{ needs.produce-ch2.outputs.title }}"
+          CH3_TITLE="${{ needs.produce-ch3.outputs.title }}"
+          CH4_TITLE="${{ needs.produce-ch4.outputs.title }}"
+          CH5_TITLE="${{ needs.produce-ch5.outputs.title }}"
+          python - <<PYEOF
+          import os
           from datetime import date
+          from scripts.telegram_notify import send_message
+          from scripts.email_notify import send_morning_summary
+
           date_str = date.today().isoformat()
+
+          channel_info = [
+              ("ch1", "Dopamine Loop",   "${CH1_STATUS}", "${CH1_TITLE}"),
+              ("ch2", "FinanceFiction",  "${CH2_STATUS}", "${CH2_TITLE}"),
+              ("ch3", "Redacted",        "${CH3_STATUS}", "${CH3_TITLE}"),
+              ("ch4", "The Grey Matter", "${CH4_STATUS}", "${CH4_TITLE}"),
+              ("ch5", "The Quiet Record","${CH5_STATUS}", "${CH5_TITLE}"),
+          ]
+
+          results = {}
+          for ch_id, ch_name, status, title in channel_info:
+              ok = status == "success"
+              results[ch_id] = {
+                  "status": "ok" if ok else "error",
+                  "title": title or ch_name,
+                  "failed_step": "see GitHub Actions logs" if not ok else "",
+                  "error": f"Job result: {status}" if not ok else "",
+              }
+
+          # Detailed email
+          send_morning_summary(results, date_str)
+
+          # Brief Telegram ping
+          ok_count = sum(1 for d in results.values() if d["status"] == "ok")
+          total = len(results)
+          icon = "✅" if ok_count == total else ("⚠️" if ok_count > 0 else "❌")
           send_message(
-              f"📊 *Daily Summary* — Morning pipeline complete for {date_str}. "
-              f"Videos scheduled to publish at 18:00 UTC."
+              f"{icon} *Morning Pipeline* — {ok_count}/{total} videos produced ({date_str})"
+              f"\nFull report sent to email."
           )
-          notify_pipeline_success("Morning — Daily Summary", date_str, "")
           PYEOF
         env:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}

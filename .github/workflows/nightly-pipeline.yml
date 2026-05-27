@@ -67,18 +67,16 @@ jobs:
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
 
       - name: Notify topic generation complete
-        if: success()
+        if: failure()
         run: |
           python - <<'PYEOF'
           import os
           from datetime import date
           from scripts.telegram_notify import send_message
-          from scripts.email_notify import notify_pipeline_success
-          provider = os.environ.get("AI_PROVIDER", "")
+          from scripts.email_notify import notify_pipeline_failure
           date_str = date.today().isoformat()
-          provider_note = f" _(via {provider})_" if provider else ""
-          send_message(f"*Nightly Pipeline* — Topics generated for {date_str}{provider_note}")
-          notify_pipeline_success("Nightly — Topics", date_str, provider)
+          send_message(f"❌ *Nightly Pipeline* — Topic generation FAILED for {date_str}")
+          notify_pipeline_failure("Nightly — Topics", date_str, "generate_topics.py exited non-zero")
           PYEOF
         env:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
@@ -86,7 +84,6 @@ jobs:
           GMAIL_USER: ${{ secrets.GMAIL_USER }}
           GMAIL_APP_PASSWORD: ${{ secrets.GMAIL_APP_PASSWORD }}
           GMAIL_TO: ${{ secrets.GMAIL_TO }}
-          AI_PROVIDER: ${{ steps.gen_topics.outputs.ai_provider }}
         continue-on-error: true
 
   generate-scripts:
@@ -131,24 +128,16 @@ jobs:
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
 
       - name: Notify script generation complete
-        if: always()
+        if: failure()
         run: |
-          STATUS="${{ job.status }}"
-          python - <<PYEOF
+          python - <<'PYEOF'
           import os
           from datetime import date
           from scripts.telegram_notify import send_message
-          from scripts.email_notify import notify_pipeline_success, notify_pipeline_failure
-          status = "${STATUS}"
-          provider = os.environ.get("AI_PROVIDER", "")
+          from scripts.email_notify import notify_pipeline_failure
           date_str = date.today().isoformat()
-          icon = "✅" if status == "success" else "❌"
-          provider_note = f" _(via {provider})_" if provider else ""
-          send_message(f"{icon} *Nightly Pipeline* — Script generation {status} for {date_str}{provider_note}")
-          if status == "success":
-              notify_pipeline_success("Nightly — Scripts", date_str, provider)
-          else:
-              notify_pipeline_failure("Nightly — Scripts", date_str, f"Job status: {status}")
+          send_message(f"❌ *Nightly Pipeline* — Script generation FAILED for {date_str}")
+          notify_pipeline_failure("Nightly — Scripts", date_str, "write_scripts.py exited non-zero")
           PYEOF
         env:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
@@ -156,5 +145,4 @@ jobs:
           GMAIL_USER: ${{ secrets.GMAIL_USER }}
           GMAIL_APP_PASSWORD: ${{ secrets.GMAIL_APP_PASSWORD }}
           GMAIL_TO: ${{ secrets.GMAIL_TO }}
-          AI_PROVIDER: ${{ steps.gen_scripts.outputs.ai_provider }}
         continue-on-error: true

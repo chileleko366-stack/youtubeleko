@@ -12,6 +12,8 @@ import { DataViz } from "./compositions/DataViz";
 import { DocumentScan } from "./compositions/DocumentScan";
 import { ArchiveFootage } from "./compositions/ArchiveFootage";
 import { BrainDiagram } from "./compositions/BrainDiagram";
+import { SpaceShorts } from "./compositions/SpaceShorts";
+import type { SpaceShortsProps } from "./compositions/SpaceShorts";
 
 export type CompositionProps = {
   text: string;
@@ -50,6 +52,19 @@ const compositions = [
   { id: "BrainDiagram", component: BrainDiagram },
 ];
 
+const spaceShortsDefaultProps: SpaceShortsProps = {
+  factCards: [
+    { text: "Space is expanding faster than light", subtitle: "" },
+    { text: "A teaspoon of neutron star weighs 1 billion tons", subtitle: "" },
+    { text: "The observable universe is 93 billion light-years wide", subtitle: "" },
+    { text: "Follow for a space fact every day 🚀", subtitle: "#SpaceFacts" },
+  ],
+  brandColor: "#ff4444",
+  backgroundColor: "#03010a",
+  fontPrimary: "Arial",
+  durationInFrames: 1800,
+};
+
 export const RemotionRoot: React.FC = () => {
   return (
     <>
@@ -68,6 +83,19 @@ export const RemotionRoot: React.FC = () => {
           })}
         />
       ))}
+      {/* CH6 — SpaceShorts vertical composition (9:16) */}
+      <Composition
+        id="SpaceShorts"
+        component={SpaceShorts}
+        durationInFrames={1800}
+        fps={30}
+        width={1080}
+        height={1920}
+        defaultProps={spaceShortsDefaultProps}
+        calculateMetadata={async ({ props }) => ({
+          durationInFrames: props.durationInFrames ?? 1800,
+        })}
+      />
     </>
   );
 };

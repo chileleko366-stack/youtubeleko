@@ -41,6 +41,7 @@ CHANNEL_GRAIN_SETTINGS: Dict[str, Dict[str, Any]] = {
     "ch3": {"grain": 0.16, "vhs_effect": False, "crt_effect": False},
     "ch4": {"grain": 0.09, "vhs_effect": False, "crt_effect": False},
     "ch5": {"grain": 0.07, "vhs_effect": False, "crt_effect": False},
+    "ch6": {"grain": 0.04, "vhs_effect": False, "crt_effect": False},
 }
 
 # Music tracks mapped by channel (use free/royalty-free asset paths or Cloudinary URLs)
@@ -50,6 +51,7 @@ MUSIC_STYLE: Dict[str, str] = {
     "ch3": "dark_cinematic_tense",
     "ch4": "ambient_contemplative",
     "ch5": "orchestral_documentary",
+    "ch6": "ambient_space_cinematic",
 }
 
 
@@ -354,9 +356,11 @@ def assemble_video(
             "-pix_fmt", "yuv420p",
             black_path,
         ]
-        _run_ffmpeg(black_args, f"Black fallback line {ln}")
-        line_clips.append(black_path)
-        per_line_temp.append(black_path)
+        if _run_ffmpeg(black_args, f"Black fallback line {ln}"):
+            line_clips.append(black_path)
+            per_line_temp.append(black_path)
+        else:
+            logger.warning("[%s] Black frame generation failed for line %d — skipping line", channel_id, ln)
 
     if not line_clips:
         logger.error("[%s] No clips available to assemble.", channel_id)
@@ -374,11 +378,13 @@ def assemble_video(
     # Step 2: Mix audio
     mixed_audio = str(temp_dir / "mixed_audio.aac")
     logger.info("[%s] Mixing audio...", channel_id)
-    _mix_audio(voiceover_path, music_path, video_duration, mixed_audio)
+    audio_ok = _mix_audio(voiceover_path, music_path, video_duration, mixed_audio)
+    if not audio_ok:
+        logger.warning("[%s] Audio mixing failed — video will be muxed without audio", channel_id)
 
     # Step 3: Mux video + audio
     logger.info("[%s] Muxing final video → %s", channel_id, output_path)
-    if Path(mixed_audio).exists():
+    if audio_ok and Path(mixed_audio).exists():
         mux_args = [
             "-i", concat_video,
             "-i", mixed_audio,
@@ -422,6 +428,7 @@ def assemble_video(
 
 if __name__ == "__main__":
     import sys
+    import glob
 
     if len(sys.argv) < 2:
         print("Usage: python assemble_video.py <manifest.json>")
@@ -431,6 +438,62 @@ if __name__ == "__main__":
         manifest_data = json.load(f)
 
     ch_id = manifest_data.get("channel_id", "ch1")
-    print(f"Assembling video for channel {ch_id}...")
-    print("Note: This script is typically called from the GitHub Actions pipeline.")
-    print("To test: provide mograph_clips and b_roll_clips as arguments to assemble_video().")
+    date_str = manifest_data.get("date") or __import__("datetime").date.today().isoformat()
+    output_vid = f"temp/output/{ch_id}_{date_str}.mp4"
+    Path("temp/output").mkdir(parents=True, exist_ok=True)
+
+    lines = manifest_data.get("lines", [])
+
+    # Collect rendered mograph clips
+    mograph_dir = Path("temp/mographs") / ch_id
+    mograph_clips = [
+        (ln.get("line_number", i), str(mograph_dir / f"line_{ln.get('line_number', i):04d}.mp4")
+         if (mograph_dir / f"line_{ln.get('line_number', i):04d}.mp4").exists() else None)
+        for i, ln in enumerate(lines)
+    ]
+
+    # Collect b-roll clips
+    broll_dir = Path("temp/broll") / ch_id
+    broll_clips = [
+        (ln.get("line_number", i), str(broll_dir / f"line_{ln.get('line_number', i):04d}.mp4")
+         if (broll_dir / f"line_{ln.get('line_number', i):04d}.mp4").exists() else None)
+        for i, ln in enumerate(lines)
+    ]
+
+    # Combined voiceover — concatenate per-line MP3s or generate from full script
+    audio_dir = Path("temp/audio") / ch_id
+    per_line_audio = sorted(audio_dir.glob("line_*.mp3")) if audio_dir.exists() else []
+    combined_vo = f"temp/audio/{ch_id}_combined.mp3"
+
+    if per_line_audio:
+        # Concatenate per-line audio files into one track
+        concat_list = str(Path("temp") / f"audio_concat_{ch_id}.txt")
+        with open(concat_list, "w") as cf:
+            for ap in per_line_audio:
+                cf.write(f"file '{ap.resolve()}'\n")
+        concat_ok = _run_ffmpeg(
+            ["-f", "concat", "-safe", "0", "-i", concat_list, "-c", "copy", combined_vo],
+            f"Concatenate per-line audio for {ch_id}",
+        )
+        voiceover_path: Optional[str] = combined_vo if concat_ok else None
+    else:
+        # Generate combined voiceover from full script text
+        from generate_voiceover import generate_full_script_voiceover  # pylint: disable=import-outside-toplevel
+        vo_ok = generate_full_script_voiceover(manifest_data, combined_vo)
+        voiceover_path = combined_vo if vo_ok else None
+
+    success = assemble_video(
+        manifest=manifest_data,
+        voiceover_path=voiceover_path,
+        mograph_clips=mograph_clips,
+        b_roll_clips=broll_clips,
+        output_path=output_vid,
+        music_path=None,
+    )
+
+    if success:
+        print(f"Video assembled: {output_vid}")
+        sys.exit(0)
+    else:
+        print(f"ERROR: Assembly failed for {ch_id}")
+        sys.exit(1)

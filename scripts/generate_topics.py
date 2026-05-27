@@ -9,7 +9,7 @@ import json
 import logging
 import os
 import time
-from datetime import date
+from datetime import date, timedelta
 from typing import Any, Dict, List
 
 import cloudinary
@@ -183,7 +183,7 @@ def _write_github_output(key: str, value: str) -> None:
 def main():
     """Generate topics for all 5 channels and upload to Cloudinary."""
     _init_cloudinary()
-    date_str = date.today().isoformat()
+    date_str = (date.today() + timedelta(days=1)).isoformat()
     results = {}
     providers_used: set = set()
 
@@ -216,8 +216,15 @@ def main():
             print(f"[{ch_id}] ERROR: {data['error']}")
     print(f"\nAI provider(s) used: {provider_str}")
 
-    # Expose for GitHub Actions Telegram notification step
+    # Expose for GitHub Actions downstream steps
     _write_github_output("ai_provider", provider_str)
+
+    # Send rich email summary with topics chosen per channel
+    try:
+        from email_notify import send_nightly_summary  # pylint: disable=import-outside-toplevel
+        send_nightly_summary(results, date_str, provider_str)
+    except Exception as exc:  # pylint: disable=broad-except
+        logger.warning("Email nightly summary failed (non-fatal): %s", exc)
 
     failed = [k for k, v in results.items() if v["status"] == "error"]
     if failed:
