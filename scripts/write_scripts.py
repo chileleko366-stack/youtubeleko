@@ -19,7 +19,7 @@ import logging
 import os
 import re
 import time
-from datetime import date
+from datetime import date, timedelta
 from typing import Any, Callable, Dict, List
 
 import cloudinary
@@ -622,7 +622,7 @@ def _write_github_output(key: str, value: str) -> None:
 
 def main():
     _init_cloudinary()
-    date_str = date.today().isoformat()
+    date_str = (date.today() + timedelta(days=1)).isoformat()
     results = {}
     providers_used: set = set()
 

@@ -9,7 +9,7 @@ import json
 import logging
 import os
 import time
-from datetime import date
+from datetime import date, timedelta
 from typing import Any, Dict, List
 
 import cloudinary
@@ -183,7 +183,7 @@ def _write_github_output(key: str, value: str) -> None:
 def main():
     """Generate topics for all 5 channels and upload to Cloudinary."""
     _init_cloudinary()
-    date_str = date.today().isoformat()
+    date_str = (date.today() + timedelta(days=1)).isoformat()
     results = {}
     providers_used: set = set()
 
