@@ -142,8 +142,8 @@ def generate_lines(script: str) -> List[Dict[str, Any]]:
 
     client = get_client()
 
-    system = "You are a video timing director. Break short scripts into precise timed segments."
-    prompt = f"""Break this 60-second script into timed lines for a YouTube Short:
+    system = "You are a video timing director for a space documentary channel. Break scripts into timed segments with visual direction."
+    prompt = f"""Break this 60-second space facts script into timed lines for a YouTube Short:
 
 {script}
 
@@ -152,6 +152,8 @@ Rules:
 - Duration in seconds based on 150 wpm speaking pace
 - Total must add up to 55-65 seconds
 - Type: narration | title_card | pause
+- b_roll_keywords: 3 specific Pexels search terms for space stock footage matching the line (e.g. "saturn rings space", "nebula stars galaxy", "black hole space")
+- scene_type: best Remotion fallback scene if no footage found — one of: stars | planet | nebula | galaxy | solar | blackhole
 
 Return ONLY a valid JSON array:
 [
@@ -160,7 +162,9 @@ Return ONLY a valid JSON array:
     "text": "line text here",
     "type": "narration",
     "duration_seconds": 4.0,
-    "cumulative_seconds": 4.0
+    "cumulative_seconds": 4.0,
+    "b_roll_keywords": ["saturn rings space", "gas giant planet", "outer planets"],
+    "scene_type": "planet"
   }}
 ]
 

@@ -12,6 +12,8 @@ import { DataViz } from "./compositions/DataViz";
 import { DocumentScan } from "./compositions/DocumentScan";
 import { ArchiveFootage } from "./compositions/ArchiveFootage";
 import { BrainDiagram } from "./compositions/BrainDiagram";
+import { SpaceScene } from "./compositions/SpaceScene";
+import type { SpaceSceneProps } from "./compositions/SpaceScene";
 
 export type CompositionProps = {
   text: string;
@@ -50,6 +52,12 @@ const compositions = [
   { id: "BrainDiagram", component: BrainDiagram },
 ];
 
+const spaceDefaultProps: SpaceSceneProps = {
+  sceneType: "stars",
+  accentColor: "#ff2222",
+  durationInFrames: 90,
+};
+
 export const RemotionRoot: React.FC = () => {
   return (
     <>
@@ -68,6 +76,20 @@ export const RemotionRoot: React.FC = () => {
           })}
         />
       ))}
+
+      {/* CH6 — portrait space scene (1080×1920) */}
+      <Composition
+        id="SpaceScene"
+        component={SpaceScene}
+        durationInFrames={90}
+        fps={30}
+        width={1080}
+        height={1920}
+        defaultProps={spaceDefaultProps}
+        calculateMetadata={async ({ props }) => ({
+          durationInFrames: (props as SpaceSceneProps).durationInFrames ?? 90,
+        })}
+      />
     </>
   );
 };

@@ -13,11 +13,11 @@
     "time_utc": "18:00"
   },
   "narrator_mode": true,
-  "tts_voice": "en-US-ChristopherNeural",
-  "tts_rate": "-5%",
-  "tts_pitch": "-2Hz",
-  "speech_rate": "-5%",
-  "pitch": "-2Hz",
+  "tts_voice": "en-US-GuyNeural",
+  "tts_rate": "-9%",
+  "tts_pitch": "-4Hz",
+  "speech_rate": "-9%",
+  "pitch": "-4Hz",
   "shorts": {
     "word_count": 150,
     "duration_seconds": 60,
