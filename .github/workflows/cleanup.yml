@@ -1,0 +1,53 @@
+name: Evening Cloudinary Cleanup
+
+on:
+  schedule:
+    # 21:00 UTC daily — after all pipelines have finished
+    - cron: "0 21 * * *"
+  workflow_dispatch:
+
+env:
+  PYTHONPATH: ${{ github.workspace }}
+
+jobs:
+  cleanup:
+    name: Clean up Cloudinary assets
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Install Python dependencies
+        run: pip install -r requirements.txt
+
+      - name: Delete old Cloudinary assets
+        run: python scripts/cleanup_cloudinary.py
+        env:
+          CLOUDINARY_CLOUD_NAME: ${{ secrets.CLOUDINARY_CLOUD_NAME }}
+          CLOUDINARY_API_KEY: ${{ secrets.CLOUDINARY_API_KEY }}
+          CLOUDINARY_API_SECRET: ${{ secrets.CLOUDINARY_API_SECRET }}
+
+      - name: Notify cleanup done
+        if: always()
+        run: |
+          python - <<'PYEOF'
+          from scripts.telegram_notify import send_message
+          from datetime import date
+          status = "${{ job.status }}"
+          icon = "✅" if status == "success" else "❌"
+          send_message(f"{icon} *Cloudinary cleanup* — {date.today().isoformat()}")
+          PYEOF
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+        continue-on-error: true
