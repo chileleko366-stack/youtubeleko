@@ -5,19 +5,12 @@ import {
   spring,
   useCurrentFrame,
   useVideoConfig,
+  random,
 } from "remotion";
 import type { CompositionProps } from "../Root";
-
-const STAR_COUNT = 180;
-
-const stars = Array.from({ length: STAR_COUNT }, (_, i) => ({
-  id: i,
-  x: Math.random() * 100,
-  y: Math.random() * 100,
-  size: Math.random() * 2.5 + 0.5,
-  opacity: Math.random() * 0.7 + 0.2,
-  twinkleOffset: Math.random() * 60,
-}));
+import { ParticleField } from "../lib/particles";
+import { GlowText } from "../lib/glowText";
+import { easeOutExpo } from "../lib/easing";
 
 export const SpaceTitle: React.FC<CompositionProps> = ({
   text,
@@ -27,84 +20,94 @@ export const SpaceTitle: React.FC<CompositionProps> = ({
   fontSecondary,
 }) => {
   const frame = useCurrentFrame();
-  const { fps } = useVideoConfig();
+  const { fps, width } = useVideoConfig();
 
-  // Title zoom spring
-  const titleSpring = spring({
-    frame,
+  const words = text.split(" ");
+
+  // Subtitle slides down from above with spring + blur dissolve
+  const subtitleSpring = spring({
+    frame: Math.max(0, frame - 4),
     fps,
-    config: { damping: 14, stiffness: 80, mass: 1.2 },
+    config: { damping: 18, stiffness: 90 },
   });
-  const titleScale = interpolate(titleSpring, [0, 1], [0.4, 1]);
-  const titleOpacity = interpolate(titleSpring, [0, 1], [0, 1]);
+  const subtitleY = interpolate(subtitleSpring, [0, 1], [-48, 0]);
+  const subtitleOpacity = interpolate(subtitleSpring, [0, 1], [0, 1]);
+  const subtitleBlur = interpolate(subtitleSpring, [0, 1], [8, 0]);
 
-  // Underline draw (starts at frame 8)
-  const underlineSpring = spring({
-    frame: Math.max(0, frame - 8),
+  // Main title words stagger with easeOutExpo
+  const wordAnimations = words.map((_, i) => {
+    const wordDelay = 12 + i * 6;
+    const rawProg = interpolate(frame, [wordDelay, wordDelay + 18], [0, 1], {
+      extrapolateLeft: "clamp",
+      extrapolateRight: "clamp",
+    });
+    const prog = easeOutExpo(rawProg);
+    return {
+      scale: interpolate(prog, [0, 1], [0.7, 1]),
+      opacity: interpolate(prog, [0, 1], [0, 1]),
+    };
+  });
+
+  // Red accent underline — first line draws left to right
+  const lineDelay = 12 + words.length * 6;
+  const line1Spring = spring({
+    frame: Math.max(0, frame - lineDelay),
     fps,
-    config: { damping: 18, stiffness: 100 },
+    config: { damping: 20, stiffness: 100 },
   });
-  const underlineWidth = interpolate(underlineSpring, [0, 1], [0, 100]);
+  const line1Width = interpolate(line1Spring, [0, 1], [0, 60]);
 
-  // Subtitle fade (starts at frame 18)
-  const subtitleProgress = spring({
-    frame: Math.max(0, frame - 18),
+  // Second shorter line draws right to left (bracket)
+  const line2Spring = spring({
+    frame: Math.max(0, frame - lineDelay - 6),
     fps,
-    config: { damping: 20, stiffness: 90 },
+    config: { damping: 20, stiffness: 100 },
   });
-  const subtitleOpacity = interpolate(subtitleProgress, [0, 1], [0, 1]);
-  const subtitleY = interpolate(subtitleProgress, [0, 1], [24, 0]);
+  const line2Width = interpolate(line2Spring, [0, 1], [0, 30]);
 
-  // Vignette pulse
-  const vignetteOpacity = interpolate(frame, [0, 20], [1, 0.55], {
+  // Scan light sweep after title fully revealed
+  const scanStart = lineDelay + 14;
+  const scanX = interpolate(frame, [scanStart, scanStart + 30], [-100, width + 100], {
+    extrapolateLeft: "clamp",
     extrapolateRight: "clamp",
   });
+  const scanOpacity = interpolate(
+    frame,
+    [scanStart, scanStart + 4, scanStart + 24, scanStart + 30],
+    [0, 0.18, 0.18, 0],
+    { extrapolateLeft: "clamp", extrapolateRight: "clamp" }
+  );
+
+  // Nebula blob opacities slowly breathe — deterministic using frame
+  const nebulaBreath = 0.5 + 0.25 * Math.sin((frame * Math.PI) / 90);
 
   return (
     <AbsoluteFill
       style={{
-        backgroundColor,
+        backgroundColor: "#00000e",
         overflow: "hidden",
         display: "flex",
         alignItems: "center",
         justifyContent: "center",
       }}
     >
-      {/* Starfield */}
-      {stars.map((star) => {
-        const twinkle =
-          0.4 +
-          0.6 *
-            Math.abs(
-              Math.sin(((frame + star.twinkleOffset) * Math.PI) / 40)
-            );
-        return (
-          <div
-            key={star.id}
-            style={{
-              position: "absolute",
-              left: `${star.x}%`,
-              top: `${star.y}%`,
-              width: star.size,
-              height: star.size,
-              borderRadius: "50%",
-              backgroundColor: "#ffffff",
-              opacity: star.opacity * twinkle,
-            }}
-          />
-        );
-      })}
-
-      {/* Nebula gradient overlay */}
+      {/* Layer 2: Nebula radial gradients — deep purple/blue/red */}
       <div
         style={{
           position: "absolute",
           inset: 0,
-          background:
-            "radial-gradient(ellipse 80% 60% at 50% 50%, rgba(60,0,80,0.45) 0%, rgba(0,10,40,0.35) 55%, transparent 100%)",
+          background: `
+            radial-gradient(ellipse 80% 70% at 50% 50%, rgba(60,0,90,${nebulaBreath * 0.55}) 0%, transparent 65%),
+            radial-gradient(ellipse 50% 60% at 15% 30%, rgba(0,10,80,0.45) 0%, transparent 60%),
+            radial-gradient(ellipse 45% 55% at 85% 70%, rgba(80,0,30,0.4) 0%, transparent 60%),
+            radial-gradient(ellipse 35% 40% at 70% 15%, rgba(20,0,60,0.35) 0%, transparent 55%)
+          `,
           pointerEvents: "none",
         }}
       />
+
+      {/* Layer 3: ParticleField — 200 stars, tiny, slow drift */}
+      <ParticleField count={200} speedMultiplier={0.3} sizeRange={[0.4, 2.2]} />
 
       {/* Vignette */}
       <div
@@ -112,8 +115,7 @@ export const SpaceTitle: React.FC<CompositionProps> = ({
           position: "absolute",
           inset: 0,
           background:
-            "radial-gradient(ellipse 100% 100% at 50% 50%, transparent 40%, rgba(0,0,8,0.85) 100%)",
-          opacity: vignetteOpacity,
+            "radial-gradient(ellipse 110% 110% at 50% 50%, transparent 30%, rgba(0,0,10,0.88) 100%)",
           pointerEvents: "none",
         }}
       />
@@ -124,68 +126,134 @@ export const SpaceTitle: React.FC<CompositionProps> = ({
           position: "relative",
           textAlign: "center",
           padding: "0 120px",
-          maxWidth: 1400,
+          maxWidth: 1500,
           width: "100%",
         }}
       >
-        {/* Decorative top line */}
+        {/* Channel name / subtitle — slides from above */}
         <div
-          style={{
-            width: 80,
-            height: 2,
-            backgroundColor: brandColor,
-            margin: "0 auto 28px",
-            opacity: subtitleOpacity,
-          }}
-        />
-
-        {/* Main title */}
-        <h1
-          style={{
-            fontFamily: fontPrimary,
-            fontSize: 112,
-            fontWeight: 900,
-            color: "#ffffff",
-            margin: "0 0 12px",
-            letterSpacing: "4px",
-            textTransform: "uppercase",
-            opacity: titleOpacity,
-            transform: `scale(${titleScale})`,
-            transformOrigin: "center center",
-            textShadow: `0 0 60px rgba(255,68,68,0.4), 0 0 120px rgba(255,68,68,0.15)`,
-            lineHeight: 1.05,
-          }}
-        >
-          {text}
-        </h1>
-
-        {/* Animated underline */}
-        <div
-          style={{
-            height: 4,
-            width: `${underlineWidth}%`,
-            background: `linear-gradient(90deg, ${brandColor}, rgba(255,100,100,0.3))`,
-            margin: "0 auto 28px",
-            borderRadius: 2,
-            boxShadow: `0 0 16px ${brandColor}`,
-          }}
-        />
-
-        {/* Subtitle */}
-        <p
           style={{
             fontFamily: fontSecondary,
-            fontSize: 28,
-            color: "rgba(255,255,255,0.65)",
-            margin: 0,
-            letterSpacing: "8px",
+            fontSize: 22,
+            color: "rgba(255,255,255,0.55)",
+            letterSpacing: "10px",
             textTransform: "uppercase",
+            marginBottom: 36,
             opacity: subtitleOpacity,
             transform: `translateY(${subtitleY}px)`,
+            filter: `blur(${subtitleBlur}px)`,
           }}
         >
           RED SPACE FACTS
-        </p>
+        </div>
+
+        {/* Main title — word-by-word stagger */}
+        <div
+          style={{
+            position: "relative",
+            display: "flex",
+            flexWrap: "wrap",
+            justifyContent: "center",
+            gap: "0 0.25em",
+            marginBottom: 24,
+          }}
+        >
+          {words.map((word, i) => (
+            <span
+              key={i}
+              style={{
+                display: "inline-block",
+                opacity: wordAnimations[i].opacity,
+                transform: `scale(${wordAnimations[i].scale})`,
+                transformOrigin: "center bottom",
+              }}
+            >
+              <GlowText
+                text={word}
+                fontFamily={fontPrimary}
+                fontSize={112}
+                fontWeight={900}
+                color="#ffffff"
+                glowColor="rgba(220,30,30,0.9)"
+                glowRadius={60}
+                letterSpacing="4px"
+                textTransform="uppercase"
+              />
+            </span>
+          ))}
+
+          {/* Scan light sweep */}
+          <div
+            style={{
+              position: "absolute",
+              inset: 0,
+              pointerEvents: "none",
+              overflow: "hidden",
+            }}
+          >
+            <div
+              style={{
+                position: "absolute",
+                top: 0,
+                bottom: 0,
+                left: scanX,
+                width: 120,
+                background:
+                  "linear-gradient(90deg, transparent, rgba(255,255,255,0.22), transparent)",
+                opacity: scanOpacity,
+              }}
+            />
+          </div>
+        </div>
+
+        {/* Red accent bracket lines */}
+        <div
+          style={{
+            position: "relative",
+            height: 8,
+            marginBottom: 32,
+            display: "flex",
+            justifyContent: "center",
+            gap: 8,
+          }}
+        >
+          {/* Line 1: draws left-to-right */}
+          <div
+            style={{
+              height: 4,
+              width: line1Width,
+              background: `linear-gradient(90deg, ${brandColor}, rgba(255,80,80,0.4))`,
+              borderRadius: 2,
+              boxShadow: `0 0 16px ${brandColor}, 0 0 32px rgba(255,68,68,0.4)`,
+              alignSelf: "center",
+            }}
+          />
+          {/* Line 2: draws right-to-left (bracket) */}
+          <div
+            style={{
+              height: 4,
+              width: line2Width,
+              background: `linear-gradient(270deg, ${brandColor}, rgba(255,80,80,0.3))`,
+              borderRadius: 2,
+              boxShadow: `0 0 12px ${brandColor}`,
+              alignSelf: "center",
+            }}
+          />
+        </div>
+
+        {/* Channel label below */}
+        <div
+          style={{
+            fontFamily: fontSecondary,
+            fontSize: 18,
+            color: "rgba(255,255,255,0.35)",
+            letterSpacing: "8px",
+            textTransform: "uppercase",
+            opacity: subtitleOpacity,
+          }}
+        >
+          CH6 — EST. 2024
+        </div>
       </div>
     </AbsoluteFill>
   );

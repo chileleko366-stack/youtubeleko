@@ -161,17 +161,7 @@ def _call_text_stage(stage_name: str, call_fn, max_retries: int = MAX_RETRIES) -
 def _generate(prompt: str, system: str = "", max_tokens: int = 4096, temperature: float = 0.7) -> str:
     """Call the ai_client with auto-refresh on failure."""
     client = get_client()
-    messages = []
-    if system:
-        messages.append({"role": "system", "content": system})
-    messages.append({"role": "user", "content": prompt})
-    response = client.chat.completions.create(
-        model=client._model,
-        messages=messages,
-        temperature=temperature,
-        max_tokens=max_tokens,
-    )
-    return response.choices[0].message.content.strip()
+    return client.generate(prompt, system_prompt=system, max_tokens=max_tokens, temperature=temperature)
 
 
 # ---------------------------------------------------------------------------

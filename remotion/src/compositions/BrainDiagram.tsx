@@ -7,6 +7,9 @@ import {
   useVideoConfig,
 } from "remotion";
 import type { CompositionProps } from "../Root";
+import { GradientBg } from "../lib/gradientBg";
+import { LightLeak } from "../lib/lightLeak";
+import { easeOutElastic } from "../lib/easing";
 
 interface Node {
   x: number;
@@ -26,112 +29,165 @@ export const BrainDiagram: React.FC<CompositionProps> = ({
   const frame = useCurrentFrame();
   const { fps } = useVideoConfig();
 
-  const bgProgress = spring({
-    frame,
-    fps,
-    config: { damping: 30, stiffness: 60 },
-  });
-  const titleProgress = spring({
-    frame: frame - 5,
-    fps,
-    config: { damping: 22, stiffness: 100 },
-  });
+  const bgProgress = spring({ frame, fps, config: { damping: 30, stiffness: 60 } });
+  const titleProgress = spring({ frame: frame - 5, fps, config: { damping: 22, stiffness: 100 } });
 
   const bgOpacity = interpolate(bgProgress, [0, 1], [0, 1]);
   const titleOpacity = interpolate(titleProgress, [0, 1], [0, 1]);
   const titleY = interpolate(titleProgress, [0, 1], [-25, 0]);
 
-  // Build nodes from bullets or split text
-  const rawItems = bullets && bullets.length > 0
-    ? bullets.slice(0, 5)
-    : text.split(/[,.;]/).map((s) => s.trim()).filter(Boolean).slice(0, 5);
+  const rawItems =
+    bullets && bullets.length > 0
+      ? bullets.slice(0, 6)
+      : text.split(/[,.;]/).map((s) => s.trim()).filter(Boolean).slice(0, 6);
 
   const nodes: Node[] = rawItems.map((item, i) => {
     const angle = (i / rawItems.length) * Math.PI * 2 - Math.PI / 2;
-    const radius = 220;
+    const radius = 240;
     return {
       x: 960 + Math.cos(angle) * radius,
       y: 540 + Math.sin(angle) * radius,
-      label: item.length > 20 ? item.substring(0, 20) + "..." : item,
-      radius: 70,
+      label: item.length > 22 ? item.substring(0, 22) + "…" : item,
+      radius: 65,
     };
   });
 
-  // Pulsing central node
-  const pulseScale = 1 + interpolate(
-    Math.sin(frame * 0.08),
-    [-1, 1],
-    [0, 0.06]
-  );
+  // Central node pulse
+  const centralPulse = 1 + interpolate(Math.sin(frame * 0.08), [-1, 1], [0, 0.08]);
+
+  // Signal dot travels along each connection
+  // It travels from center to each node over ~30 frames, then loops
+  const signalCycle = 60;
 
   return (
-    <AbsoluteFill
-      style={{
-        backgroundColor,
-        opacity: bgOpacity,
-      }}
-    >
-      {/* SVG connections and nodes */}
+    <AbsoluteFill style={{ backgroundColor, opacity: bgOpacity }}>
+      <GradientBg
+        colors={[backgroundColor, `${brandColor}0d`, backgroundColor]}
+        angle={130}
+        animate
+      />
+
       <svg
         style={{ position: "absolute", inset: 0, width: "100%", height: "100%" }}
         viewBox="0 0 1920 1080"
       >
-        {/* Connection lines */}
+        {/* Connection lines with strokeDashoffset draw-in */}
         {nodes.map((node, i) => {
-          const lineProgress = spring({
-            frame: frame - i * 5 - 8,
+          const lineDelay = i * 6 + 4;
+          const lineSpring = spring({
+            frame: frame - lineDelay,
             fps,
             config: { damping: 20, stiffness: 60 },
           });
-          const lineOpacity = interpolate(lineProgress, [0, 1], [0, 0.5]);
+          const dx = node.x - 960;
+          const dy = node.y - 540;
+          const lineLen = Math.hypot(dx, dy);
+          const drawn = interpolate(lineSpring, [0, 1], [0, lineLen]);
+          const lineOpacity = interpolate(lineSpring, [0, 0.2], [0, 0.6]);
+
+          // Signal dot traveling along the line
+          const signalT = ((frame + i * (signalCycle / nodes.length)) % signalCycle) / signalCycle;
+          const signalX = 960 + dx * signalT;
+          const signalY = 540 + dy * signalT;
+          const signalOpacity = lineSpring > 0.5 ? 0.9 : 0;
+
           return (
-            <line
-              key={`line-${i}`}
-              x1={960}
-              y1={540}
-              x2={node.x}
-              y2={node.y}
-              stroke={brandColor}
-              strokeWidth={2}
-              opacity={lineOpacity}
-              strokeDasharray="8 4"
-            />
+            <g key={`conn-${i}`}>
+              {/* Animated line */}
+              <line
+                x1={960}
+                y1={540}
+                x2={node.x}
+                y2={node.y}
+                stroke={brandColor}
+                strokeWidth={2}
+                opacity={lineOpacity}
+                strokeDasharray={`${drawn} ${lineLen - drawn}`}
+                style={{ filter: `drop-shadow(0 0 4px ${brandColor})` }}
+              />
+              {/* Traveling signal dot */}
+              <circle
+                cx={signalX}
+                cy={signalY}
+                r={5}
+                fill={brandColor}
+                opacity={signalOpacity}
+                style={{ filter: `drop-shadow(0 0 8px ${brandColor})` }}
+              />
+            </g>
           );
         })}
 
-        {/* Satellite nodes */}
+        {/* Satellite nodes — easeOutElastic scale-in */}
         {nodes.map((node, i) => {
-          const nodeProgress = spring({
-            frame: frame - i * 5 - 10,
+          const nodeDelay = i * 6 + 10;
+          const nodeSpring = spring({
+            frame: frame - nodeDelay,
             fps,
-            config: { damping: 18, stiffness: 80 },
+            config: { damping: 8, stiffness: 240, mass: 0.4 },
           });
-          const nodeOpacity = interpolate(nodeProgress, [0, 1], [0, 1]);
-          const nodeScale = interpolate(nodeProgress, [0, 1], [0.4, 1]);
+          const nodeScale = interpolate(
+            easeOutElastic(Math.min(nodeSpring, 1)),
+            [0, 1],
+            [0, 1]
+          );
+          const nodeOpacity = interpolate(nodeSpring, [0, 0.3], [0, 1]);
+
+          // Glow ring pulses sequentially
+          const glowPulse = 1 + interpolate(
+            Math.sin(frame * 0.1 + i * 1.2),
+            [-1, 1],
+            [0, 0.4]
+          );
+          const glowRingOpacity = interpolate(nodeSpring, [0, 1], [0, 0.4]);
+
+          // Label fades in after node fires
+          const labelSpring = spring({
+            frame: frame - nodeDelay - 6,
+            fps,
+            config: { damping: 22, stiffness: 100 },
+          });
+          const labelOpacity = interpolate(labelSpring, [0, 1], [0, 1]);
 
           return (
             <g key={`node-${i}`} opacity={nodeOpacity}>
+              {/* Outer glow ring */}
+              <circle
+                cx={node.x}
+                cy={node.y}
+                r={node.radius * nodeScale * glowPulse}
+                fill="none"
+                stroke={brandColor}
+                strokeWidth={2}
+                opacity={glowRingOpacity}
+                style={{ filter: `drop-shadow(0 0 12px ${brandColor})` }}
+              />
+              {/* Node fill */}
               <circle
                 cx={node.x}
                 cy={node.y}
                 r={node.radius * nodeScale}
                 fill={`${brandColor}22`}
                 stroke={brandColor}
-                strokeWidth={2}
+                strokeWidth={2.5}
+                style={{ filter: `drop-shadow(0 0 8px ${brandColor}88)` }}
               />
+              {/* Label */}
               <foreignObject
-                x={node.x - 80}
-                y={node.y - 20}
-                width={160}
-                height={40}
+                x={node.x - 90}
+                y={node.y - 22}
+                width={180}
+                height={44}
+                opacity={labelOpacity}
               >
                 <div
                   style={{
                     fontFamily: fontSecondary,
-                    fontSize: 18,
+                    fontSize: 19,
                     color: "#ffffff",
                     textAlign: "center",
                     lineHeight: 1.2,
+                    textShadow: "0 1px 6px rgba(0,0,0,0.8)",
                   }}
                 >
                   {node.label}
@@ -145,16 +201,18 @@ export const BrainDiagram: React.FC<CompositionProps> = ({
         <circle
           cx={960}
           cy={540}
-          r={90 * pulseScale}
+          r={95 * centralPulse}
           fill={brandColor}
-          opacity={0.15}
+          opacity={0.1}
+          style={{ filter: `drop-shadow(0 0 20px ${brandColor})` }}
         />
         <circle
           cx={960}
           cy={540}
-          r={70}
+          r={72}
           fill={brandColor}
-          opacity={0.9}
+          opacity={0.92}
+          style={{ filter: `drop-shadow(0 0 16px ${brandColor})` }}
         />
       </svg>
 
@@ -173,9 +231,10 @@ export const BrainDiagram: React.FC<CompositionProps> = ({
           style={{
             height: 4,
             width: 60,
-            backgroundColor: brandColor,
+            background: `linear-gradient(90deg, ${brandColor}, ${brandColor}44)`,
             marginBottom: 20,
             borderRadius: 2,
+            boxShadow: `0 0 10px ${brandColor}88`,
           }}
         />
         <h1
@@ -189,9 +248,11 @@ export const BrainDiagram: React.FC<CompositionProps> = ({
             letterSpacing: "-1px",
           }}
         >
-          {text.length > 70 ? text.substring(0, 70) + "..." : text}
+          {text.length > 70 ? text.substring(0, 70) + "…" : text}
         </h1>
       </div>
+
+      <LightLeak opacity={0.05} />
     </AbsoluteFill>
   );
 };

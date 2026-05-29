@@ -5,24 +5,28 @@ import {
   spring,
   useCurrentFrame,
   useVideoConfig,
+  random,
 } from "remotion";
 import type { CompositionProps } from "../Root";
+import { easeInOutCubic, easeOutElastic } from "../lib/easing";
 
 const MILESTONES = [
-  { year: "13.8B", label: "Big Bang" },
-  { year: "13.6B", label: "First Stars" },
-  { year: "4.6B", label: "Solar System" },
-  { year: "3.8B", label: "First Life" },
-  { year: "0.3M", label: "Homo Sapiens" },
+  { year: "13.8B", label: "Big Bang", era: "ORIGINS" },
+  { year: "13.6B", label: "First Stars", era: "ORIGINS" },
+  { year: "4.6B", label: "Solar System", era: "SOLAR" },
+  { year: "3.8B", label: "First Life", era: "LIFE" },
+  { year: "0.3M", label: "Homo Sapiens", era: "LIFE" },
 ];
 
+// Deterministic star field
 const BG_STARS = Array.from({ length: 150 }, (_, i) => ({
   id: i,
-  x: Math.random() * 100,
-  y: Math.random() * 100,
-  size: Math.random() * 2 + 0.4,
-  opacity: Math.random() * 0.6 + 0.15,
-  twinkle: Math.random() * 60,
+  x: random(`ct-x-${i}`) * 100,
+  y: random(`ct-y-${i}`) * 100,
+  size: random(`ct-s-${i}`) * 2 + 0.4,
+  opacity: random(`ct-o-${i}`) * 0.6 + 0.15,
+  twinkle: random(`ct-t-${i}`) * 60,
+  speed: 35 + random(`ct-sp-${i}`) * 30,
 }));
 
 export const CosmicTimeline: React.FC<CompositionProps> = ({
@@ -35,13 +39,16 @@ export const CosmicTimeline: React.FC<CompositionProps> = ({
   const frame = useCurrentFrame();
   const { fps } = useVideoConfig();
 
-  // Timeline line draws from left
-  const lineSpring = spring({
-    frame,
-    fps,
-    config: { damping: 22, stiffness: 55 },
+  // Timeline line draws left-to-right with easeInOutCubic
+  const rawLineProg = interpolate(frame, [0, 50], [0, 1], {
+    extrapolateLeft: "clamp",
+    extrapolateRight: "clamp",
   });
-  const lineWidth = interpolate(lineSpring, [0, 1], [0, 100]);
+  const lineProgress = easeInOutCubic(rawLineProg);
+  const lineWidth = lineProgress * 100;
+
+  // Leading dot position (the glowing leading edge)
+  const leadingX = lineWidth;
 
   // Title fades in
   const titleSpring = spring({
@@ -55,7 +62,7 @@ export const CosmicTimeline: React.FC<CompositionProps> = ({
   return (
     <AbsoluteFill
       style={{
-        backgroundColor,
+        backgroundColor: "#00000c",
         overflow: "hidden",
         display: "flex",
         flexDirection: "column",
@@ -63,12 +70,12 @@ export const CosmicTimeline: React.FC<CompositionProps> = ({
         justifyContent: "center",
       }}
     >
-      {/* Stars */}
+      {/* Stars — deterministic */}
       {BG_STARS.map((s) => {
         const tw =
           0.35 +
           0.65 *
-            Math.abs(Math.sin(((frame + s.twinkle) * Math.PI) / 50));
+            Math.abs(Math.sin(((frame + s.twinkle) * Math.PI) / s.speed));
         return (
           <div
             key={s.id}
@@ -146,17 +153,65 @@ export const CosmicTimeline: React.FC<CompositionProps> = ({
           maxWidth: 1400,
         }}
       >
+        {/* Era brackets above the line */}
+        <div
+          style={{
+            position: "absolute",
+            top: -52,
+            left: 0,
+            right: 0,
+            display: "flex",
+            justifyContent: "space-between",
+            pointerEvents: "none",
+            opacity: titleOpacity,
+          }}
+        >
+          {["ORIGINS", "SOLAR ERA", "LIFE"].map((era, i) => {
+            const positions = [[0, 33], [33, 55], [55, 100]];
+            const [start, end] = positions[i];
+            return (
+              <div
+                key={i}
+                style={{
+                  position: "absolute",
+                  left: `${start}%`,
+                  width: `${end - start}%`,
+                  textAlign: "center",
+                }}
+              >
+                <div
+                  style={{
+                    fontFamily: fontSecondary,
+                    fontSize: 11,
+                    color: `rgba(255,68,68,0.5)`,
+                    letterSpacing: "4px",
+                    textTransform: "uppercase",
+                    marginBottom: 4,
+                  }}
+                >
+                  {era}
+                </div>
+                <div
+                  style={{
+                    height: 1,
+                    background: `linear-gradient(90deg, transparent, rgba(255,68,68,0.3), transparent)`,
+                  }}
+                />
+              </div>
+            );
+          })}
+        </div>
+
         {/* Timeline base line */}
         <div
           style={{
             position: "relative",
             height: 3,
-            backgroundColor: "rgba(255,255,255,0.1)",
+            backgroundColor: "rgba(255,255,255,0.08)",
             borderRadius: 2,
-            marginBottom: 0,
           }}
         >
-          {/* Animated line */}
+          {/* Animated gradient line — brand red at leading edge, fading back */}
           <div
             style={{
               position: "absolute",
@@ -164,11 +219,28 @@ export const CosmicTimeline: React.FC<CompositionProps> = ({
               top: 0,
               height: "100%",
               width: `${lineWidth}%`,
-              background: `linear-gradient(90deg, ${brandColor}, rgba(120,40,255,0.7))`,
+              background: `linear-gradient(90deg, rgba(80,0,0,0.6) 0%, rgba(180,20,0,0.8) 60%, ${brandColor} 100%)`,
               borderRadius: 2,
-              boxShadow: `0 0 16px ${brandColor}, 0 0 40px rgba(255,68,68,0.3)`,
+              boxShadow: `0 0 10px rgba(255,68,68,0.4)`,
             }}
           />
+
+          {/* Glowing leading edge dot */}
+          {lineWidth > 0 && lineWidth < 100 && (
+            <div
+              style={{
+                position: "absolute",
+                top: "50%",
+                left: `${leadingX}%`,
+                width: 10,
+                height: 10,
+                borderRadius: "50%",
+                backgroundColor: "#ffffff",
+                transform: "translate(-50%, -50%)",
+                boxShadow: `0 0 16px #ffffff, 0 0 32px ${brandColor}, 0 0 48px rgba(255,68,68,0.4)`,
+              }}
+            />
+          )}
         </div>
 
         {/* Milestones */}
@@ -183,23 +255,31 @@ export const CosmicTimeline: React.FC<CompositionProps> = ({
           }}
         >
           {MILESTONES.map((m, i) => {
-            const delay = 8 + i * 6;
-            const dotSpring = spring({
-              frame: Math.max(0, frame - delay),
-              fps,
-              config: { damping: 8, stiffness: 180 },
-            });
-            const dotScale = interpolate(dotSpring, [0, 1], [0, 1]);
-            const dotOpacity = interpolate(dotSpring, [0, 0.3], [0, 1], {
+            // Milestone pops in with easeOutElastic when line reaches it
+            const milestoneX = (i / (MILESTONES.length - 1)) * 100;
+            const lineReachesAt = (milestoneX / 100) * 50; // map to frame range 0-50
+            const dotDelay = lineReachesAt;
+
+            const rawDotProg = interpolate(
+              frame,
+              [dotDelay, dotDelay + 10],
+              [0, 1],
+              { extrapolateLeft: "clamp", extrapolateRight: "clamp" }
+            );
+            const dotScale = easeOutElastic(rawDotProg);
+            const dotOpacity = interpolate(rawDotProg, [0, 0.2], [0, 1], {
               extrapolateRight: "clamp",
             });
+
+            const labelDelay = dotDelay + 4;
             const labelSpring = spring({
-              frame: Math.max(0, frame - delay - 4),
+              frame: Math.max(0, frame - labelDelay),
               fps,
               config: { damping: 18, stiffness: 100 },
             });
             const labelOpacity = interpolate(labelSpring, [0, 1], [0, 1]);
             const labelY = interpolate(labelSpring, [0, 1], [20, 0]);
+            const labelBlur = interpolate(labelSpring, [0, 1], [4, 0]);
 
             return (
               <div
@@ -209,10 +289,9 @@ export const CosmicTimeline: React.FC<CompositionProps> = ({
                   flexDirection: "column",
                   alignItems: "center",
                   position: "relative",
-                  top: 0,
                 }}
               >
-                {/* Dot */}
+                {/* Dot — pops in with easeOutElastic */}
                 <div
                   style={{
                     width: 22,
@@ -226,13 +305,14 @@ export const CosmicTimeline: React.FC<CompositionProps> = ({
                   }}
                 />
 
-                {/* Labels below dot */}
+                {/* Labels below dot — blur-to-sharp */}
                 <div
                   style={{
                     marginTop: 20,
                     textAlign: "center",
                     opacity: labelOpacity,
                     transform: `translateY(${labelY}px)`,
+                    filter: `blur(${labelBlur}px)`,
                   }}
                 >
                   <div

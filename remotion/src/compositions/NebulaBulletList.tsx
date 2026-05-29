@@ -5,17 +5,24 @@ import {
   spring,
   useCurrentFrame,
   useVideoConfig,
+  random,
 } from "remotion";
 import type { CompositionProps } from "../Root";
+import { ParticleField } from "../lib/particles";
 
-const BG_STARS = Array.from({ length: 100 }, (_, i) => ({
+// Deterministic star field
+const BG_STARS = Array.from({ length: 60 }, (_, i) => ({
   id: i,
-  x: Math.random() * 100,
-  y: Math.random() * 100,
-  size: Math.random() * 1.8 + 0.3,
-  opacity: Math.random() * 0.45 + 0.1,
-  tw: Math.random() * 55,
+  x: random(`nb-x-${i}`) * 100,
+  y: random(`nb-y-${i}`) * 100,
+  size: random(`nb-s-${i}`) * 1.8 + 0.3,
+  opacity: random(`nb-o-${i}`) * 0.35 + 0.08,
+  tw: random(`nb-t-${i}`) * 55,
+  speed: 35 + random(`nb-sp-${i}`) * 30,
 }));
+
+// Arrow SVG path circumference estimate (for strokeDashoffset animation)
+const ARROW_PATH = "M 0 10 L 14 0 L 14 7 L 28 7 L 28 13 L 14 13 L 14 20 Z";
 
 export const NebulaBulletList: React.FC<CompositionProps> = ({
   text,
@@ -29,6 +36,9 @@ export const NebulaBulletList: React.FC<CompositionProps> = ({
   const { fps } = useVideoConfig();
 
   const items = bullets && bullets.length > 0 ? bullets : [text];
+
+  // Hue rotation for animated nebula background
+  const hueShift = (frame * 0.4) % 360;
 
   // Title
   const titleSpring = spring({
@@ -47,20 +57,53 @@ export const NebulaBulletList: React.FC<CompositionProps> = ({
   });
   const lineWidth = interpolate(lineSpring, [0, 1], [0, 100]);
 
+  // Vertical glowing connecting line grows from top as bullets appear
+  const lastBulletDelay = 14 + (items.length - 1) * 10;
+  const vertLineHeight = interpolate(
+    frame,
+    [14, lastBulletDelay + 12],
+    [0, 100],
+    { extrapolateLeft: "clamp", extrapolateRight: "clamp" }
+  );
+
   return (
     <AbsoluteFill
       style={{
-        backgroundColor,
+        backgroundColor: "#000010",
         overflow: "hidden",
         display: "flex",
         alignItems: "center",
         justifyContent: "center",
       }}
     >
+      {/* Animated nebula gradient with hue-rotate */}
+      <div
+        style={{
+          position: "absolute",
+          inset: 0,
+          background: `
+            radial-gradient(ellipse 70% 90% at 15% 50%, rgba(60,0,120,0.4) 0%, transparent 65%),
+            radial-gradient(ellipse 60% 70% at 85% 50%, rgba(0,20,100,0.35) 0%, transparent 65%),
+            radial-gradient(ellipse 80% 50% at 50% 80%, rgba(20,0,60,0.3) 0%, transparent 70%)
+          `,
+          filter: `hue-rotate(${hueShift}deg)`,
+        }}
+      />
+
+      {/* Static nebula layer (no hue rotation so it stays readable) */}
+      <div
+        style={{
+          position: "absolute",
+          inset: 0,
+          background:
+            "radial-gradient(ellipse 90% 90% at 50% 50%, rgba(0,0,15,0.5) 0%, transparent 100%)",
+        }}
+      />
+
       {/* Stars */}
       {BG_STARS.map((s) => {
         const tw =
-          0.3 + 0.7 * Math.abs(Math.sin(((frame + s.tw) * Math.PI) / 52));
+          0.3 + 0.7 * Math.abs(Math.sin(((frame + s.tw) * Math.PI) / s.speed));
         return (
           <div
             key={s.id}
@@ -79,18 +122,8 @@ export const NebulaBulletList: React.FC<CompositionProps> = ({
         );
       })}
 
-      {/* Nebula gradient — deep purple/blue */}
-      <div
-        style={{
-          position: "absolute",
-          inset: 0,
-          background: `
-            radial-gradient(ellipse 70% 90% at 15% 50%, rgba(60,0,120,0.4) 0%, transparent 65%),
-            radial-gradient(ellipse 60% 70% at 85% 50%, rgba(0,20,100,0.35) 0%, transparent 65%),
-            radial-gradient(ellipse 80% 50% at 50% 80%, rgba(20,0,60,0.3) 0%, transparent 70%)
-          `,
-        }}
-      />
+      {/* ParticleField — 60 particles, purple/blue tones */}
+      <ParticleField count={60} speedMultiplier={0.2} sizeRange={[0.3, 1.5]} />
 
       {/* Vignette */}
       <div
@@ -103,7 +136,7 @@ export const NebulaBulletList: React.FC<CompositionProps> = ({
         }}
       />
 
-      {/* Left accent bar */}
+      {/* Left glowing accent bar */}
       <div
         style={{
           position: "absolute",
@@ -157,9 +190,24 @@ export const NebulaBulletList: React.FC<CompositionProps> = ({
         />
 
         {/* Bullet items */}
-        <div style={{ display: "flex", flexDirection: "column", gap: 24 }}>
+        <div style={{ display: "flex", flexDirection: "column", gap: 22, position: "relative" }}>
+          {/* Vertical glowing connecting line on the left */}
+          <div
+            style={{
+              position: "absolute",
+              left: 14,
+              top: 20,
+              width: 2,
+              height: `${vertLineHeight}%`,
+              background: `linear-gradient(180deg, ${brandColor}, rgba(120,40,255,0.5))`,
+              boxShadow: `0 0 8px ${brandColor}`,
+              borderRadius: 1,
+              transition: "none",
+            }}
+          />
+
           {items.map((item, i) => {
-            const delay = 14 + i * 8;
+            const delay = 14 + i * 10;
             const bSpring = spring({
               frame: Math.max(0, frame - delay),
               fps,
@@ -167,6 +215,26 @@ export const NebulaBulletList: React.FC<CompositionProps> = ({
             });
             const bOpacity = interpolate(bSpring, [0, 1], [0, 1]);
             const bX = interpolate(bSpring, [0, 1], [-60, 0]);
+
+            // SVG arrow draws itself via strokeDashoffset
+            const arrowProg = interpolate(bSpring, [0, 1], [60, 0]);
+
+            // Alternating zebra treatment
+            const isEven = i % 2 === 0;
+
+            // Per-bullet word reveal
+            const bulletWords = item.split(" ");
+            const wordAnims = bulletWords.map((_, wi) => {
+              const wDelay = delay + 4 + wi * 2;
+              const wProg = interpolate(frame, [wDelay, wDelay + 8], [0, 1], {
+                extrapolateLeft: "clamp",
+                extrapolateRight: "clamp",
+              });
+              return {
+                opacity: wProg,
+                blur: interpolate(wProg, [0, 1], [3, 0]),
+              };
+            });
 
             return (
               <div
@@ -177,28 +245,41 @@ export const NebulaBulletList: React.FC<CompositionProps> = ({
                   gap: 24,
                   opacity: bOpacity,
                   transform: `translateX(${bX}px)`,
+                  padding: "12px 16px",
+                  background: isEven
+                    ? "rgba(255,255,255,0.025)"
+                    : "rgba(255,68,68,0.02)",
+                  borderRadius: 6,
+                  borderLeft: isEven
+                    ? `2px solid rgba(255,68,68,0.15)`
+                    : `2px solid rgba(120,80,255,0.15)`,
                 }}
               >
-                {/* Arrow bullet */}
-                <div
-                  style={{
-                    flexShrink: 0,
-                    marginTop: 8,
-                    width: 0,
-                    height: 0,
-                    borderTop: "10px solid transparent",
-                    borderBottom: "10px solid transparent",
-                    borderLeft: `16px solid ${brandColor}`,
-                    filter: `drop-shadow(0 0 6px ${brandColor})`,
-                  }}
-                />
+                {/* SVG triangle/arrow that draws itself */}
+                <svg
+                  width={30}
+                  height={20}
+                  viewBox="0 0 30 20"
+                  style={{ flexShrink: 0, marginTop: 6 }}
+                >
+                  <path
+                    d={ARROW_PATH}
+                    fill="none"
+                    stroke={brandColor}
+                    strokeWidth={2}
+                    strokeDasharray={60}
+                    strokeDashoffset={arrowProg}
+                    strokeLinejoin="round"
+                    style={{ filter: `drop-shadow(0 0 4px ${brandColor})` }}
+                  />
+                </svg>
 
                 {/* Bullet number + text */}
                 <div style={{ display: "flex", alignItems: "baseline", gap: 16 }}>
                   <span
                     style={{
                       fontFamily: fontPrimary,
-                      fontSize: 28,
+                      fontSize: 24,
                       color: brandColor,
                       opacity: 0.7,
                       minWidth: 32,
@@ -210,14 +291,26 @@ export const NebulaBulletList: React.FC<CompositionProps> = ({
                   <span
                     style={{
                       fontFamily: fontSecondary,
-                      fontSize: 30,
+                      fontSize: 28,
                       fontWeight: 400,
                       color: "rgba(255,255,255,0.9)",
                       lineHeight: 1.45,
                       letterSpacing: "0.3px",
                     }}
                   >
-                    {item}
+                    {bulletWords.map((word, wi) => (
+                      <span
+                        key={wi}
+                        style={{
+                          display: "inline-block",
+                          opacity: wordAnims[wi].opacity,
+                          filter: `blur(${wordAnims[wi].blur}px)`,
+                          marginRight: "0.3em",
+                        }}
+                      >
+                        {word}
+                      </span>
+                    ))}
                   </span>
                 </div>
               </div>

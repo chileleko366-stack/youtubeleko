@@ -5,17 +5,11 @@ import {
   spring,
   useCurrentFrame,
   useVideoConfig,
+  random,
 } from "remotion";
 import type { CompositionProps } from "../Root";
-
-const MINI_STARS = Array.from({ length: 120 }, (_, i) => ({
-  id: i,
-  x: Math.random() * 100,
-  y: Math.random() * 100,
-  size: Math.random() * 2 + 0.5,
-  opacity: Math.random() * 0.5 + 0.15,
-  twinkleOffset: Math.random() * 60,
-}));
+import { ParticleField } from "../lib/particles";
+import { easeOutBack } from "../lib/easing";
 
 export const PlanetReveal: React.FC<CompositionProps> = ({
   text,
@@ -27,84 +21,91 @@ export const PlanetReveal: React.FC<CompositionProps> = ({
   const frame = useCurrentFrame();
   const { fps } = useVideoConfig();
 
-  // Planet grows from center
-  const planetSpring = spring({
+  // Planet grows from 0 scale with easeOutBack spring (slight bounce overshoot)
+  const planetRawSpring = spring({
     frame,
     fps,
-    config: { damping: 12, stiffness: 70, mass: 1.4 },
+    config: { damping: 10, stiffness: 100, mass: 1.2 },
   });
-  const planetScale = interpolate(planetSpring, [0, 1], [0, 1]);
-  const planetOpacity = interpolate(planetSpring, [0, 0.3], [0, 1], {
+  const planetScale = easeOutBack(Math.min(planetRawSpring, 1));
+  const planetOpacity = interpolate(planetRawSpring, [0, 0.3], [0, 1], {
     extrapolateRight: "clamp",
   });
 
-  // Glow ring expands after planet
-  const ringSpring = spring({
-    frame: Math.max(0, frame - 6),
-    fps,
-    config: { damping: 14, stiffness: 60 },
-  });
-  const ringScale = interpolate(ringSpring, [0, 1], [0.6, 1.25]);
-  const ringOpacity = interpolate(ringSpring, [0, 0.4, 0.8, 1], [0, 0.9, 0.6, 0.4]);
+  // Atmosphere ring rotation angles
+  const ring1Angle = frame * 0.5;
+  const ring2Angle = -(frame * 0.32);
+  const ring3Angle = frame * 0.18;
 
-  // Red pulse ring
-  const pulseScale =
-    1.3 + 0.15 * Math.abs(Math.sin((frame * Math.PI) / 28));
-  const pulseOpacity =
-    0.3 - 0.25 * Math.abs(Math.sin((frame * Math.PI) / 28));
+  // Glow ring pulsing
+  const glowPulse1 = 0.4 + 0.3 * Math.abs(Math.sin((frame * Math.PI) / 32));
+  const glowPulse2 = 0.3 + 0.35 * Math.abs(Math.sin((frame * Math.PI) / 44 + 1));
 
-  // Text slides in from right
-  const textSpring = spring({
+  // Lens flare appears after planet is revealed
+  const lensFlareSpring = spring({
     frame: Math.max(0, frame - 18),
+    fps,
+    config: { damping: 14, stiffness: 80 },
+  });
+  const lensFlareOpacity = interpolate(lensFlareSpring, [0, 1], [0, 1]);
+
+  // Title slides in from left
+  const titleSpring = spring({
+    frame: Math.max(0, frame - 14),
     fps,
     config: { damping: 18, stiffness: 100 },
   });
-  const textX = interpolate(textSpring, [0, 1], [120, 0]);
-  const textOpacity = interpolate(textSpring, [0, 1], [0, 1]);
+  const titleX = interpolate(titleSpring, [0, 1], [-120, 0]);
+  const titleOpacity = interpolate(titleSpring, [0, 1], [0, 1]);
 
-  // Sub-label fade
+  // Subtitle slides in from right
   const subSpring = spring({
-    frame: Math.max(0, frame - 28),
+    frame: Math.max(0, frame - 22),
     fps,
-    config: { damping: 20, stiffness: 100 },
+    config: { damping: 18, stiffness: 100 },
   });
+  const subX = interpolate(subSpring, [0, 1], [120, 0]);
   const subOpacity = interpolate(subSpring, [0, 1], [0, 1]);
 
   const PLANET_SIZE = 380;
+  const HALF = PLANET_SIZE / 2;
 
   return (
     <AbsoluteFill
       style={{
-        backgroundColor,
+        backgroundColor: "#00000a",
         overflow: "hidden",
         display: "flex",
         alignItems: "center",
         justifyContent: "center",
       }}
     >
-      {/* Stars */}
-      {MINI_STARS.map((s) => {
-        const tw =
-          0.4 +
-          0.6 *
-            Math.abs(Math.sin(((frame + s.twinkleOffset) * Math.PI) / 45));
-        return (
-          <div
-            key={s.id}
-            style={{
-              position: "absolute",
-              left: `${s.x}%`,
-              top: `${s.y}%`,
-              width: s.size,
-              height: s.size,
-              borderRadius: "50%",
-              backgroundColor: "#ffffff",
-              opacity: s.opacity * tw,
-              transform: "translate(-50%, -50%)",
-            }}
-          />
-        );
-      })}
+      {/* Nebula background */}
+      <div
+        style={{
+          position: "absolute",
+          inset: 0,
+          background: `
+            radial-gradient(ellipse 80% 80% at 50% 50%, rgba(20,0,50,0.6) 0%, transparent 70%),
+            radial-gradient(ellipse 50% 40% at 15% 70%, rgba(0,10,60,0.4) 0%, transparent 60%),
+            radial-gradient(ellipse 40% 50% at 85% 30%, rgba(60,0,30,0.35) 0%, transparent 55%)
+          `,
+        }}
+      />
+
+      {/* Stars behind: ParticleField */}
+      <ParticleField count={100} speedMultiplier={0.2} sizeRange={[0.3, 1.8]} />
+
+      {/* Vignette */}
+      <div
+        style={{
+          position: "absolute",
+          inset: 0,
+          background:
+            "radial-gradient(ellipse 110% 110% at 50% 50%, transparent 30%, rgba(0,0,8,0.85) 100%)",
+          pointerEvents: "none",
+        }}
+      />
 
       {/* Layout: planet left, text right */}
       <div
@@ -125,33 +126,69 @@ export const PlanetReveal: React.FC<CompositionProps> = ({
             flexShrink: 0,
             width: PLANET_SIZE,
             height: PLANET_SIZE,
+            transform: `scale(${planetScale})`,
+            opacity: planetOpacity,
           }}
         >
-          {/* Pulse ring */}
+          {/* Multiple box-shadow glow ring layers */}
           <div
             style={{
               position: "absolute",
-              inset: 0,
+              inset: -30,
               borderRadius: "50%",
-              border: `3px solid ${brandColor}`,
-              transform: `scale(${pulseScale})`,
-              opacity: pulseOpacity,
-              boxShadow: `0 0 20px ${brandColor}`,
+              boxShadow: `
+                0 0 40px rgba(255,68,68,${glowPulse1 * 0.25}),
+                0 0 80px rgba(255,68,68,${glowPulse1 * 0.15}),
+                0 0 140px rgba(120,20,255,${glowPulse2 * 0.15})
+              `,
             }}
           />
 
-          {/* Glow ring */}
-          <div
+          {/* Atmosphere rings: SVG ellipses rotating around planet */}
+          <svg
+            viewBox={`0 0 ${PLANET_SIZE} ${PLANET_SIZE}`}
             style={{
               position: "absolute",
-              inset: -20,
-              borderRadius: "50%",
-              border: `6px solid rgba(255,68,68,0.5)`,
-              transform: `scale(${ringScale})`,
-              opacity: ringOpacity,
-              boxShadow: `0 0 40px rgba(255,68,68,0.3), inset 0 0 40px rgba(255,68,68,0.1)`,
+              inset: 0,
+              width: "100%",
+              height: "100%",
+              overflow: "visible",
             }}
-          />
+          >
+            {/* Ring 1 */}
+            <ellipse
+              cx={HALF}
+              cy={HALF}
+              rx={HALF + 40}
+              ry={22}
+              fill="none"
+              stroke={`rgba(180,100,255,0.35)`}
+              strokeWidth={6}
+              transform={`rotate(${ring1Angle}, ${HALF}, ${HALF})`}
+            />
+            {/* Ring 2 */}
+            <ellipse
+              cx={HALF}
+              cy={HALF}
+              rx={HALF + 70}
+              ry={18}
+              fill="none"
+              stroke={`rgba(100,160,255,0.2)`}
+              strokeWidth={3}
+              transform={`rotate(${ring2Angle}, ${HALF}, ${HALF})`}
+            />
+            {/* Ring 3 */}
+            <ellipse
+              cx={HALF}
+              cy={HALF}
+              rx={HALF + 20}
+              ry={28}
+              fill="none"
+              stroke={`rgba(255,100,80,0.18)`}
+              strokeWidth={4}
+              transform={`rotate(${ring3Angle}, ${HALF}, ${HALF})`}
+            />
+          </svg>
 
           {/* Planet */}
           <div
@@ -160,11 +197,10 @@ export const PlanetReveal: React.FC<CompositionProps> = ({
               height: PLANET_SIZE,
               borderRadius: "50%",
               background: `
+                radial-gradient(ellipse 40% 35% at 65% 30%, rgba(255,240,220,0.85) 0%, transparent 35%),
                 radial-gradient(ellipse 65% 55% at 35% 35%, rgba(180,100,60,0.9) 0%, transparent 60%),
                 radial-gradient(ellipse 80% 80% at 50% 50%, #1a0a3e 0%, #0d0520 40%, #060210 100%)
               `,
-              opacity: planetOpacity,
-              transform: `scale(${planetScale})`,
               boxShadow: `
                 inset -40px -40px 80px rgba(0,0,0,0.8),
                 inset 20px 20px 60px rgba(100,40,160,0.3),
@@ -193,53 +229,111 @@ export const PlanetReveal: React.FC<CompositionProps> = ({
               />
             ))}
           </div>
-        </div>
 
-        {/* Text side */}
-        <div
-          style={{
-            flex: 1,
-            opacity: textOpacity,
-            transform: `translateX(${textX}px)`,
-          }}
-        >
+          {/* Lens flare at bright spot */}
           <div
             style={{
-              width: 50,
-              height: 3,
-              backgroundColor: brandColor,
-              marginBottom: 24,
-              boxShadow: `0 0 12px ${brandColor}`,
-            }}
-          />
-          <h1
-            style={{
-              fontFamily: fontPrimary,
-              fontSize: 84,
-              fontWeight: 900,
-              color: "#ffffff",
-              margin: "0 0 16px",
-              textTransform: "uppercase",
-              letterSpacing: "2px",
-              lineHeight: 1.05,
-              textShadow: "0 0 40px rgba(255,255,255,0.2)",
+              position: "absolute",
+              top: "18%",
+              left: "60%",
+              opacity: lensFlareOpacity * 0.7,
+              pointerEvents: "none",
             }}
           >
-            {text}
-          </h1>
-          <p
+            {/* Horizontal bar */}
+            <div
+              style={{
+                position: "absolute",
+                width: 32,
+                height: 2,
+                background: "linear-gradient(90deg, transparent, rgba(255,255,220,0.8), transparent)",
+                top: -1,
+                left: -16,
+              }}
+            />
+            {/* Vertical bar */}
+            <div
+              style={{
+                position: "absolute",
+                width: 2,
+                height: 32,
+                background: "linear-gradient(180deg, transparent, rgba(255,255,220,0.8), transparent)",
+                top: -16,
+                left: -1,
+              }}
+            />
+            {/* Center dot */}
+            <div
+              style={{
+                position: "absolute",
+                width: 6,
+                height: 6,
+                borderRadius: "50%",
+                background: "rgba(255,255,255,0.9)",
+                top: -3,
+                left: -3,
+                boxShadow: "0 0 8px rgba(255,255,200,0.8)",
+              }}
+            />
+          </div>
+        </div>
+
+        {/* Text side — splits into title from left + subtitle from right */}
+        <div style={{ flex: 1 }}>
+          {/* Title from left */}
+          <div
             style={{
-              fontFamily: fontSecondary,
-              fontSize: 26,
-              color: "rgba(255,255,255,0.55)",
-              margin: 0,
-              letterSpacing: "4px",
-              textTransform: "uppercase",
+              opacity: titleOpacity,
+              transform: `translateX(${titleX}px)`,
+              marginBottom: 16,
+            }}
+          >
+            <div
+              style={{
+                width: 50,
+                height: 3,
+                backgroundColor: brandColor,
+                marginBottom: 24,
+                boxShadow: `0 0 12px ${brandColor}`,
+              }}
+            />
+            <h1
+              style={{
+                fontFamily: fontPrimary,
+                fontSize: 84,
+                fontWeight: 900,
+                color: "#ffffff",
+                margin: 0,
+                textTransform: "uppercase",
+                letterSpacing: "2px",
+                lineHeight: 1.05,
+                textShadow: `0 0 40px rgba(255,255,255,0.2), 0 0 80px rgba(180,80,255,0.15)`,
+              }}
+            >
+              {text}
+            </h1>
+          </div>
+
+          {/* Subtitle from right */}
+          <div
+            style={{
               opacity: subOpacity,
+              transform: `translateX(${subX}px)`,
             }}
           >
-            PLANETARY SCIENCE
-          </p>
+            <p
+              style={{
+                fontFamily: fontSecondary,
+                fontSize: 26,
+                color: "rgba(255,255,255,0.55)",
+                margin: 0,
+                letterSpacing: "4px",
+                textTransform: "uppercase",
+              }}
+            >
+              PLANETARY SCIENCE
+            </p>
+          </div>
         </div>
       </div>
     </AbsoluteFill>

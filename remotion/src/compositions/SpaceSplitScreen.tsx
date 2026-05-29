@@ -5,25 +5,37 @@ import {
   spring,
   useCurrentFrame,
   useVideoConfig,
+  random,
 } from "remotion";
 import type { CompositionProps } from "../Root";
 
+// Deterministic star fields for each side
 const LEFT_STARS = Array.from({ length: 80 }, (_, i) => ({
   id: i,
-  x: Math.random() * 50,
-  y: Math.random() * 100,
-  size: Math.random() * 1.8 + 0.3,
-  opacity: Math.random() * 0.5 + 0.15,
-  tw: Math.random() * 60,
+  x: random(`ssl-x-${i}`) * 50,
+  y: random(`ssl-y-${i}`) * 100,
+  size: random(`ssl-s-${i}`) * 1.8 + 0.3,
+  opacity: random(`ssl-o-${i}`) * 0.5 + 0.15,
+  tw: random(`ssl-t-${i}`) * 60,
+  speed: 30 + random(`ssl-sp-${i}`) * 40,
 }));
 
 const RIGHT_STARS = Array.from({ length: 80 }, (_, i) => ({
   id: i,
-  x: 50 + Math.random() * 50,
-  y: Math.random() * 100,
-  size: Math.random() * 1.8 + 0.3,
-  opacity: Math.random() * 0.5 + 0.15,
-  tw: Math.random() * 60,
+  x: 50 + random(`ssr-x-${i}`) * 50,
+  y: random(`ssr-y-${i}`) * 100,
+  size: random(`ssr-s-${i}`) * 1.8 + 0.3,
+  opacity: random(`ssr-o-${i}`) * 0.5 + 0.15,
+  tw: random(`ssr-t-${i}`) * 60,
+  speed: 30 + random(`ssr-sp-${i}`) * 40,
+}));
+
+// Particle stream flowing down the divider line
+const DIVIDER_PARTICLES = Array.from({ length: 12 }, (_, i) => ({
+  id: i,
+  phase: (i / 12) * 100,
+  speed: 0.8 + random(`dp-sp-${i}`) * 0.6,
+  opacity: 0.4 + random(`dp-o-${i}`) * 0.5,
 }));
 
 export const SpaceSplitScreen: React.FC<CompositionProps> = ({
@@ -42,52 +54,63 @@ export const SpaceSplitScreen: React.FC<CompositionProps> = ({
   const leftSub = bullets?.[2] ?? "THE PAST";
   const rightSub = bullets?.[3] ?? "THE FUTURE";
 
-  // Left side fades in from left
+  // Left panel: slides in from -100% with spring + blur-to-sharp
   const leftSpring = spring({
     frame,
     fps,
     config: { damping: 18, stiffness: 80 },
   });
   const leftOpacity = interpolate(leftSpring, [0, 1], [0, 1]);
-  const leftX = interpolate(leftSpring, [0, 1], [-80, 0]);
+  const leftX = interpolate(leftSpring, [0, 1], [-100, 0]);
+  const leftBlur = interpolate(leftSpring, [0, 1], [20, 0]);
 
-  // Right side fades in from right
+  // Right panel: from +100%
   const rightSpring = spring({
-    frame: Math.max(0, frame - 8),
+    frame: Math.max(0, frame - 6),
     fps,
     config: { damping: 18, stiffness: 80 },
   });
   const rightOpacity = interpolate(rightSpring, [0, 1], [0, 1]);
-  const rightX = interpolate(rightSpring, [0, 1], [80, 0]);
+  const rightX = interpolate(rightSpring, [0, 1], [100, 0]);
+  const rightBlur = interpolate(rightSpring, [0, 1], [20, 0]);
 
-  // Center red divider line draws from top
-  const lineSpring = spring({
+  // Divider: WIPE from center outward (both up and down simultaneously)
+  // using clip-path: inset to reveal from center
+  const dividerSpring = spring({
     frame: Math.max(0, frame - 4),
     fps,
     config: { damping: 20, stiffness: 70 },
   });
-  const lineHeight = interpolate(lineSpring, [0, 1], [0, 100]);
+  const dividerReveal = interpolate(dividerSpring, [0, 1], [50, 0]);
 
-  // Title fades in
+  // Subtle parallax: panels drift slowly in opposite directions after settling
+  const settleProgress = Math.min(1, interpolate(leftSpring, [0.85, 1], [0, 1]));
+  const parallaxDrift = settleProgress * Math.sin((frame * Math.PI) / 150) * 4;
+
+  // Title
   const titleSpring = spring({
-    frame: Math.max(0, frame - 20),
+    frame: Math.max(0, frame - 22),
     fps,
     config: { damping: 18, stiffness: 90 },
   });
   const titleOpacity = interpolate(titleSpring, [0, 1], [0, 1]);
   const titleY = interpolate(titleSpring, [0, 1], [20, 0]);
 
+  // Text word-by-word reveal after panels settle (frame ~20)
+  const leftWords = leftLabel.split(" ");
+  const rightWords = rightLabel.split(" ");
+
   return (
     <AbsoluteFill
       style={{
-        backgroundColor,
+        backgroundColor: "#00000a",
         overflow: "hidden",
       }}
     >
       {/* Left side stars */}
       {LEFT_STARS.map((s) => {
         const tw =
-          0.3 + 0.7 * Math.abs(Math.sin(((frame + s.tw) * Math.PI) / 55));
+          0.3 + 0.7 * Math.abs(Math.sin(((frame + s.tw) * Math.PI) / s.speed));
         return (
           <div
             key={`l${s.id}`}
@@ -109,7 +132,7 @@ export const SpaceSplitScreen: React.FC<CompositionProps> = ({
       {/* Right side stars */}
       {RIGHT_STARS.map((s) => {
         const tw =
-          0.3 + 0.7 * Math.abs(Math.sin(((frame + s.tw) * Math.PI) / 55));
+          0.3 + 0.7 * Math.abs(Math.sin(((frame + s.tw) * Math.PI) / s.speed));
         return (
           <div
             key={`r${s.id}`}
@@ -128,7 +151,7 @@ export const SpaceSplitScreen: React.FC<CompositionProps> = ({
         );
       })}
 
-      {/* Left panel gradient */}
+      {/* Left panel — animated gradient nebula (blue scheme) */}
       <div
         style={{
           position: "absolute",
@@ -137,13 +160,14 @@ export const SpaceSplitScreen: React.FC<CompositionProps> = ({
           width: "50%",
           height: "100%",
           background:
-            "radial-gradient(ellipse 100% 80% at 30% 50%, rgba(0,20,80,0.4) 0%, transparent 80%)",
+            "radial-gradient(ellipse 120% 80% at 30% 50%, rgba(0,20,80,0.5) 0%, rgba(0,5,40,0.4) 60%, transparent 100%)",
           opacity: leftOpacity,
-          transform: `translateX(${leftX}px)`,
+          transform: `translateX(${leftX}px) translateX(${-parallaxDrift}px)`,
+          filter: `blur(${leftBlur}px)`,
         }}
       />
 
-      {/* Right panel gradient */}
+      {/* Right panel — animated gradient nebula (red/purple scheme) */}
       <div
         style={{
           position: "absolute",
@@ -152,9 +176,10 @@ export const SpaceSplitScreen: React.FC<CompositionProps> = ({
           width: "50%",
           height: "100%",
           background:
-            "radial-gradient(ellipse 100% 80% at 70% 50%, rgba(60,0,100,0.4) 0%, transparent 80%)",
+            "radial-gradient(ellipse 120% 80% at 70% 50%, rgba(60,0,100,0.5) 0%, rgba(40,0,60,0.4) 60%, transparent 100%)",
           opacity: rightOpacity,
-          transform: `translateX(${rightX}px)`,
+          transform: `translateX(${rightX}px) translateX(${parallaxDrift}px)`,
+          filter: `blur(${rightBlur}px)`,
         }}
       />
 
@@ -164,12 +189,12 @@ export const SpaceSplitScreen: React.FC<CompositionProps> = ({
           position: "absolute",
           inset: 0,
           background:
-            "radial-gradient(ellipse 110% 110% at 50% 50%, transparent 30%, rgba(0,0,8,0.8) 100%)",
+            "radial-gradient(ellipse 110% 110% at 50% 50%, transparent 30%, rgba(0,0,8,0.75) 100%)",
           pointerEvents: "none",
         }}
       />
 
-      {/* Left content */}
+      {/* Left content — staggered word-by-word after panel settles */}
       <div
         style={{
           position: "absolute",
@@ -181,7 +206,7 @@ export const SpaceSplitScreen: React.FC<CompositionProps> = ({
           alignItems: "center",
           justifyContent: "center",
           opacity: leftOpacity,
-          transform: `translateX(${leftX}px)`,
+          transform: `translateX(${leftX}px) translateX(${-parallaxDrift}px)`,
         }}
       >
         <div style={{ textAlign: "center", padding: "0 60px" }}>
@@ -207,9 +232,31 @@ export const SpaceSplitScreen: React.FC<CompositionProps> = ({
               letterSpacing: "4px",
               lineHeight: 1.05,
               textShadow: "0 0 40px rgba(100,150,255,0.3)",
+              display: "flex",
+              flexWrap: "wrap",
+              justifyContent: "center",
+              gap: "0 0.2em",
             }}
           >
-            {leftLabel}
+            {leftWords.map((word, wi) => {
+              const wDelay = 18 + wi * 4;
+              const wProg = interpolate(frame, [wDelay, wDelay + 8], [0, 1], {
+                extrapolateLeft: "clamp",
+                extrapolateRight: "clamp",
+              });
+              return (
+                <span
+                  key={wi}
+                  style={{
+                    display: "inline-block",
+                    opacity: wProg,
+                    transform: `translateY(${interpolate(wProg, [0, 1], [10, 0])}px)`,
+                  }}
+                >
+                  {word}
+                </span>
+              );
+            })}
           </div>
           <div
             style={{
@@ -235,7 +282,7 @@ export const SpaceSplitScreen: React.FC<CompositionProps> = ({
           alignItems: "center",
           justifyContent: "center",
           opacity: rightOpacity,
-          transform: `translateX(${rightX}px)`,
+          transform: `translateX(${rightX}px) translateX(${parallaxDrift}px)`,
         }}
       >
         <div style={{ textAlign: "center", padding: "0 60px" }}>
@@ -261,9 +308,31 @@ export const SpaceSplitScreen: React.FC<CompositionProps> = ({
               letterSpacing: "4px",
               lineHeight: 1.05,
               textShadow: `0 0 40px rgba(255,68,68,0.35)`,
+              display: "flex",
+              flexWrap: "wrap",
+              justifyContent: "center",
+              gap: "0 0.2em",
             }}
           >
-            {rightLabel}
+            {rightWords.map((word, wi) => {
+              const wDelay = 22 + wi * 4;
+              const wProg = interpolate(frame, [wDelay, wDelay + 8], [0, 1], {
+                extrapolateLeft: "clamp",
+                extrapolateRight: "clamp",
+              });
+              return (
+                <span
+                  key={wi}
+                  style={{
+                    display: "inline-block",
+                    opacity: wProg,
+                    transform: `translateY(${interpolate(wProg, [0, 1], [10, 0])}px)`,
+                  }}
+                >
+                  {word}
+                </span>
+              );
+            })}
           </div>
           <div
             style={{
@@ -277,17 +346,18 @@ export const SpaceSplitScreen: React.FC<CompositionProps> = ({
         </div>
       </div>
 
-      {/* Center red divider line */}
+      {/* Center divider line — WIPES from center outward using clip-path */}
       <div
         style={{
           position: "absolute",
           left: "50%",
           top: 0,
+          bottom: 0,
           width: 4,
-          height: `${lineHeight}%`,
-          background: `linear-gradient(180deg, transparent, ${brandColor} 10%, ${brandColor} 90%, transparent)`,
           transform: "translateX(-50%)",
+          background: `linear-gradient(180deg, transparent, ${brandColor} 10%, ${brandColor} 90%, transparent)`,
           boxShadow: `0 0 20px ${brandColor}, 0 0 40px rgba(255,68,68,0.3)`,
+          clipPath: `inset(${dividerReveal}% 0 ${dividerReveal}% 0)`,
         }}
       />
 
@@ -303,9 +373,31 @@ export const SpaceSplitScreen: React.FC<CompositionProps> = ({
           borderRadius: "50%",
           backgroundColor: brandColor,
           boxShadow: `0 0 20px ${brandColor}, 0 0 40px rgba(255,68,68,0.5)`,
-          opacity: lineHeight > 50 ? 1 : 0,
+          opacity: dividerReveal < 20 ? 1 : 0,
         }}
       />
+
+      {/* Particle stream flowing down the divider */}
+      {DIVIDER_PARTICLES.map((p) => {
+        const particleY = ((((p.phase + frame * p.speed) % 100) + 100) % 100);
+        return (
+          <div
+            key={p.id}
+            style={{
+              position: "absolute",
+              left: "50%",
+              top: `${particleY}%`,
+              width: 3,
+              height: 3,
+              borderRadius: "50%",
+              backgroundColor: brandColor,
+              transform: "translateX(-50%)",
+              opacity: p.opacity * (dividerReveal < 30 ? 1 : 0),
+              boxShadow: `0 0 6px ${brandColor}`,
+            }}
+          />
+        );
+      })}
 
       {/* Bottom title */}
       <div

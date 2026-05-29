@@ -5,16 +5,22 @@ import {
   spring,
   useCurrentFrame,
   useVideoConfig,
+  random,
 } from "remotion";
 import type { CompositionProps } from "../Root";
+import { ParticleField } from "../lib/particles";
+import { GlowText } from "../lib/glowText";
+import { easeOutBack } from "../lib/easing";
 
+// Deterministic star field
 const BG_STARS = Array.from({ length: 130 }, (_, i) => ({
   id: i,
-  x: Math.random() * 100,
-  y: Math.random() * 100,
-  size: Math.random() * 1.8 + 0.3,
-  opacity: Math.random() * 0.5 + 0.1,
-  tw: Math.random() * 60,
+  x: random(`cs-x-${i}`) * 100,
+  y: random(`cs-y-${i}`) * 100,
+  size: random(`cs-s-${i}`) * 1.8 + 0.3,
+  opacity: random(`cs-o-${i}`) * 0.5 + 0.1,
+  tw: random(`cs-t-${i}`) * 60,
+  speed: 35 + random(`cs-sp-${i}`) * 30,
 }));
 
 export const CosmicScale: React.FC<CompositionProps> = ({
@@ -27,18 +33,35 @@ export const CosmicScale: React.FC<CompositionProps> = ({
   const frame = useCurrentFrame();
   const { fps } = useVideoConfig();
 
-  // Small circle (Earth) appears first
-  const earthSpring = spring({
+  // Small circle (Earth) — springs in with easeOutBack
+  const earthRaw = spring({
     frame,
     fps,
-    config: { damping: 12, stiffness: 100 },
+    config: { damping: 10, stiffness: 120 },
   });
-  const earthScale = interpolate(earthSpring, [0, 1], [0, 1]);
-  const earthOpacity = interpolate(earthSpring, [0, 0.4], [0, 1], {
+  const earthScale = easeOutBack(Math.min(earthRaw, 1));
+  const earthOpacity = interpolate(earthRaw, [0, 0.4], [0, 1], {
     extrapolateRight: "clamp",
   });
 
-  // Large circle (Sun/star) grows in after Earth
+  // Earth label appears
+  const earthLabelSpring = spring({
+    frame: Math.max(0, frame - 10),
+    fps,
+    config: { damping: 18, stiffness: 90 },
+  });
+  const earthLabelOpacity = interpolate(earthLabelSpring, [0, 1], [0, 1]);
+  const earthLabelY = interpolate(earthLabelSpring, [0, 1], [20, 0]);
+
+  // Arrow/line appears
+  const arrowSpring = spring({
+    frame: Math.max(0, frame - 8),
+    fps,
+    config: { damping: 20, stiffness: 80 },
+  });
+  const arrowOpacity = interpolate(arrowSpring, [0, 1], [0, 1]);
+
+  // Sun grows from center over 40 frames — slowly, completely dwarfing Earth
   const sunSpring = spring({
     frame: Math.max(0, frame - 16),
     fps,
@@ -49,7 +72,26 @@ export const CosmicScale: React.FC<CompositionProps> = ({
     extrapolateRight: "clamp",
   });
 
-  // Arrow + labels
+  // Earth label slides away as Sun grows
+  const sunProgress = interpolate(sunSpring, [0, 1], [0, 1]);
+  const earthLabelSlideX = interpolate(sunProgress, [0.5, 1], [0, -40], {
+    extrapolateLeft: "clamp",
+    extrapolateRight: "clamp",
+  });
+  const earthLabelFade = interpolate(sunProgress, [0.7, 1], [1, 0.4], {
+    extrapolateLeft: "clamp",
+    extrapolateRight: "clamp",
+  });
+
+  // "109×" counts up from 1× to 109×
+  const multipleValue = Math.floor(
+    interpolate(frame, [16, 56], [1, 109], {
+      extrapolateLeft: "clamp",
+      extrapolateRight: "clamp",
+    })
+  );
+
+  // Labels
   const labelSpring = spring({
     frame: Math.max(0, frame - 32),
     fps,
@@ -75,17 +117,17 @@ export const CosmicScale: React.FC<CompositionProps> = ({
   return (
     <AbsoluteFill
       style={{
-        backgroundColor,
+        backgroundColor: "#00000a",
         overflow: "hidden",
         display: "flex",
         alignItems: "center",
         justifyContent: "center",
       }}
     >
-      {/* Stars */}
+      {/* Stars — deterministic */}
       {BG_STARS.map((s) => {
         const tw =
-          0.3 + 0.7 * Math.abs(Math.sin(((frame + s.tw) * Math.PI) / 55));
+          0.3 + 0.7 * Math.abs(Math.sin(((frame + s.tw) * Math.PI) / s.speed));
         return (
           <div
             key={s.id}
@@ -103,6 +145,9 @@ export const CosmicScale: React.FC<CompositionProps> = ({
           />
         );
       })}
+
+      {/* ParticleField */}
+      <ParticleField count={80} speedMultiplier={0.2} sizeRange={[0.3, 1.5]} />
 
       {/* Nebula backdrop */}
       <div
@@ -173,7 +218,7 @@ export const CosmicScale: React.FC<CompositionProps> = ({
           paddingTop: 60,
         }}
       >
-        {/* Earth (small) */}
+        {/* Earth (small) — easeOutBack spring */}
         <div
           style={{
             position: "relative",
@@ -185,7 +230,6 @@ export const CosmicScale: React.FC<CompositionProps> = ({
             opacity: earthOpacity,
           }}
         >
-          {/* Earth circle */}
           <div
             style={{
               width: EARTH_R * 2,
@@ -199,13 +243,13 @@ export const CosmicScale: React.FC<CompositionProps> = ({
             }}
           />
 
-          {/* Earth label */}
+          {/* Earth label — slides away as Sun grows */}
           <div
             style={{
               marginTop: 20,
               textAlign: "center",
-              opacity: labelOpacity,
-              transform: `translateY(${labelY}px)`,
+              opacity: earthLabelOpacity * earthLabelFade,
+              transform: `translateY(${earthLabelY}px) translateX(${earthLabelSlideX}px)`,
             }}
           >
             <div
@@ -232,13 +276,12 @@ export const CosmicScale: React.FC<CompositionProps> = ({
           </div>
         </div>
 
-        {/* "vs" indicator */}
+        {/* VS + scale multiplier — counts up */}
         <div
           style={{
             position: "relative",
             zIndex: 10,
-            opacity: labelOpacity,
-            transform: `translateY(${labelY}px)`,
+            opacity: arrowOpacity,
           }}
         >
           <div
@@ -249,6 +292,7 @@ export const CosmicScale: React.FC<CompositionProps> = ({
               letterSpacing: "6px",
               textTransform: "uppercase",
               marginBottom: 8,
+              textAlign: "center",
             }}
           >
             VS
@@ -262,21 +306,25 @@ export const CosmicScale: React.FC<CompositionProps> = ({
               boxShadow: `0 0 8px ${brandColor}`,
             }}
           />
-          <div
-            style={{
-              fontFamily: fontPrimary,
-              fontSize: 18,
-              color: brandColor,
-              letterSpacing: "4px",
-              marginTop: 8,
-              textAlign: "center",
-            }}
-          >
-            109×
+          {/* Count-up multiplier */}
+          <div style={{ marginTop: 8, textAlign: "center" }}>
+            <GlowText
+              text={`${multipleValue}×`}
+              fontFamily={fontPrimary}
+              fontSize={22}
+              fontWeight={900}
+              color={brandColor}
+              glowColor="rgba(255,68,68,0.7)"
+              glowRadius={20}
+              letterSpacing="2px"
+            />
+            <div style={{ fontFamily: fontSecondary, fontSize: 13, color: "rgba(255,255,255,0.4)", letterSpacing: "2px", marginTop: 4 }}>
+              LARGER
+            </div>
           </div>
         </div>
 
-        {/* Sun (large) */}
+        {/* Sun (large) — slowly GROWS from center over 40 frames */}
         <div
           style={{
             position: "relative",
@@ -288,16 +336,16 @@ export const CosmicScale: React.FC<CompositionProps> = ({
             opacity: sunOpacity,
           }}
         >
-          {/* Outer glow */}
+          {/* Outer glow halo */}
           <div
             style={{
               position: "absolute",
-              width: SUN_R * 2 + 120,
-              height: SUN_R * 2 + 120,
+              width: SUN_R * 2 + 160,
+              height: SUN_R * 2 + 160,
               borderRadius: "50%",
-              background: `radial-gradient(ellipse at 50% 50%, rgba(255,160,20,${sunGlow * 0.2}) 0%, transparent 70%)`,
-              top: -60,
-              left: -60,
+              background: `radial-gradient(ellipse at 50% 50%, rgba(255,160,20,${sunGlow * 0.22}) 0%, transparent 70%)`,
+              top: -80,
+              left: -80,
             }}
           />
 
