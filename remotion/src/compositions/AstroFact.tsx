@@ -5,30 +5,37 @@ import {
   spring,
   useCurrentFrame,
   useVideoConfig,
+  random,
 } from "remotion";
 import type { CompositionProps } from "../Root";
+import { GlowText } from "../lib/glowText";
 
-// Floating particles that drift upward
+// Deterministic upward-drifting particles
 const PARTICLES = Array.from({ length: 60 }, (_, i) => ({
   id: i,
-  x: Math.random() * 100,
-  startY: 60 + Math.random() * 40,   // start in lower portion
-  speed: 0.04 + Math.random() * 0.06, // % per frame
-  size: Math.random() * 3 + 1,
-  opacity: Math.random() * 0.5 + 0.15,
-  drift: (Math.random() - 0.5) * 0.03,
-  twinkle: Math.random() * 60,
-  delay: Math.random() * 30,
+  x: random(`af-x-${i}`) * 100,
+  startY: 60 + random(`af-sy-${i}`) * 40,
+  speed: 0.04 + random(`af-sp-${i}`) * 0.06,
+  size: random(`af-sz-${i}`) * 3 + 1,
+  opacity: random(`af-o-${i}`) * 0.5 + 0.15,
+  drift: (random(`af-d-${i}`) - 0.5) * 0.03,
+  twinkle: random(`af-t-${i}`) * 60,
+  delay: random(`af-dl-${i}`) * 30,
 }));
 
 const BG_STARS = Array.from({ length: 100 }, (_, i) => ({
   id: i,
-  x: Math.random() * 100,
-  y: Math.random() * 80,
-  size: Math.random() * 1.8 + 0.4,
-  opacity: Math.random() * 0.5 + 0.1,
-  tw: Math.random() * 60,
+  x: random(`afstar-x-${i}`) * 100,
+  y: random(`afstar-y-${i}`) * 80,
+  size: random(`afstar-s-${i}`) * 1.8 + 0.4,
+  opacity: random(`afstar-o-${i}`) * 0.5 + 0.1,
+  tw: random(`afstar-t-${i}`) * 60,
+  speed: 35 + random(`afstar-sp-${i}`) * 30,
 }));
+
+// Glitch characters for "DID YOU KNOW?" reveal
+const GLITCH_CHARS = "!@#$%^&*<>?/\\|~`[]{}";
+const DID_YOU_KNOW = "DID YOU KNOW?";
 
 export const AstroFact: React.FC<CompositionProps> = ({
   text,
@@ -42,17 +49,38 @@ export const AstroFact: React.FC<CompositionProps> = ({
 
   const isShorts = height > width; // 1080x1920
 
+  // --- DID YOU KNOW? glitch reveal ---
+  // 0-3: scrambled, frame 3: snaps to correct
+  const glitchPhase = frame < 3;
+  const headerOpacity = interpolate(frame, [0, 1], [0, 1], {
+    extrapolateLeft: "clamp",
+    extrapolateRight: "clamp",
+  });
+
+  const headerText = glitchPhase
+    ? DID_YOU_KNOW.split("").map((char, i) =>
+        char === " " ? " " : GLITCH_CHARS[Math.floor((frame * 7 + i * 13) % GLITCH_CHARS.length)]
+      ).join("")
+    : DID_YOU_KNOW;
+
   // Background pulse
   const bgPulse = 0.3 + 0.15 * Math.abs(Math.sin((frame * Math.PI) / 50));
 
-  // Main text reveal
-  const textSpring = spring({
-    frame: Math.max(0, frame - 8),
-    fps,
-    config: { damping: 12, stiffness: 70, mass: 1.2 },
+  // Main text — character-by-character spring reveal
+  const chars = text.split("");
+  const charAnims = chars.map((_, ci) => {
+    const charDelay = 8 + ci * Math.max(1.5, 40 / Math.max(1, chars.length));
+    const cSpring = spring({
+      frame: Math.max(0, frame - charDelay),
+      fps,
+      config: { damping: 14, stiffness: 100 },
+    });
+    return {
+      scale: interpolate(cSpring, [0, 1], [0.5, 1]),
+      opacity: interpolate(cSpring, [0, 1], [0, 1]),
+      blur: interpolate(cSpring, [0, 1], [6, 0]),
+    };
   });
-  const textScale = interpolate(textSpring, [0, 1], [0.8, 1]);
-  const textOpacity = interpolate(textSpring, [0, 1], [0, 1]);
 
   // Bottom bar slides up
   const barSpring = spring({
@@ -63,7 +91,7 @@ export const AstroFact: React.FC<CompositionProps> = ({
   const barY = interpolate(barSpring, [0, 1], [120, 0]);
   const barOpacity = interpolate(barSpring, [0, 1], [0, 1]);
 
-  // Glow ring pulses on the text
+  // Pulsing circular glow behind text
   const glowPulse = 0.4 + 0.35 * Math.abs(Math.sin((frame * Math.PI) / 35));
 
   // Top accent line
@@ -77,7 +105,7 @@ export const AstroFact: React.FC<CompositionProps> = ({
   return (
     <AbsoluteFill
       style={{
-        backgroundColor,
+        backgroundColor: "#000008",
         overflow: "hidden",
         display: "flex",
         flexDirection: "column",
@@ -85,29 +113,34 @@ export const AstroFact: React.FC<CompositionProps> = ({
         justifyContent: "center",
       }}
     >
-      {/* Background gradient (radial, suited for vertical) */}
+      {/* Background gradient — from bottom (deep blue) to top (black/space) */}
       <div
         style={{
           position: "absolute",
           inset: 0,
-          background: `radial-gradient(ellipse ${isShorts ? "120% 50%" : "80% 80%"} at 50% 45%, rgba(40,0,80,0.6) 0%, rgba(0,0,30,0.4) 50%, transparent 100%)`,
+          background: isShorts
+            ? "linear-gradient(180deg, #000008 0%, rgba(0,5,40,0.5) 50%, rgba(0,15,60,0.4) 100%)"
+            : "linear-gradient(180deg, #000008 0%, rgba(0,8,50,0.5) 60%, rgba(10,0,60,0.3) 100%)",
         }}
       />
 
-      {/* Nebula wash */}
+      {/* Nebula radial wash */}
       <div
         style={{
           position: "absolute",
           inset: 0,
-          background:
-            "radial-gradient(ellipse 60% 40% at 80% 20%, rgba(0,20,100,0.25) 0%, transparent 60%), radial-gradient(ellipse 50% 40% at 20% 80%, rgba(60,0,100,0.2) 0%, transparent 55%)",
+          background: `
+            radial-gradient(ellipse ${isShorts ? "120% 50%" : "80% 80%"} at 50% 45%, rgba(40,0,80,0.6) 0%, rgba(0,0,30,0.4) 50%, transparent 100%),
+            radial-gradient(ellipse 60% 40% at 80% 20%, rgba(0,20,100,0.25) 0%, transparent 60%),
+            radial-gradient(ellipse 50% 40% at 20% 80%, rgba(60,0,100,0.2) 0%, transparent 55%)
+          `,
         }}
       />
 
       {/* Background stars */}
       {BG_STARS.map((s) => {
         const tw =
-          0.3 + 0.7 * Math.abs(Math.sin(((frame + s.tw) * Math.PI) / 55));
+          0.3 + 0.7 * Math.abs(Math.sin(((frame + s.tw) * Math.PI) / s.speed));
         return (
           <div
             key={s.id}
@@ -126,7 +159,7 @@ export const AstroFact: React.FC<CompositionProps> = ({
         );
       })}
 
-      {/* Floating upward particles */}
+      {/* Floating particles drift UPWARD */}
       {PARTICLES.map((p) => {
         const effectiveFrame = Math.max(0, frame - p.delay);
         const currentY = p.startY - effectiveFrame * p.speed;
@@ -192,36 +225,36 @@ export const AstroFact: React.FC<CompositionProps> = ({
           padding: isShorts ? "0 60px" : "0 160px",
           maxWidth: isShorts ? 900 : 1400,
           width: "100%",
-          opacity: textOpacity,
-          transform: `scale(${textScale})`,
         }}
       >
-        {/* Channel tag */}
+        {/* "DID YOU KNOW?" with glitch reveal — fades in first */}
         <div
           style={{
             fontFamily: fontSecondary,
-            fontSize: isShorts ? 18 : 16,
-            color: "rgba(255,68,68,0.75)",
-            letterSpacing: "8px",
+            fontSize: isShorts ? 22 : 20,
+            color: "rgba(255,68,68,0.85)",
+            letterSpacing: "10px",
             textTransform: "uppercase",
-            marginBottom: isShorts ? 40 : 28,
+            marginBottom: isShorts ? 48 : 36,
+            opacity: headerOpacity,
+            fontVariantNumeric: "tabular-nums",
           }}
         >
-          #REDSPACEFACTS
+          {headerText}
         </div>
 
-        {/* Glow backdrop */}
+        {/* Pulsing circular glow backdrop */}
         <div
           style={{
             position: "absolute",
-            inset: isShorts ? "-60px -40px" : "-40px -60px",
-            background: `radial-gradient(ellipse at 50% 50%, rgba(255,68,68,${glowPulse * 0.12}) 0%, transparent 70%)`,
-            borderRadius: 24,
+            inset: isShorts ? "-80px -40px" : "-60px -80px",
+            background: `radial-gradient(ellipse at 50% 50%, rgba(255,68,68,${glowPulse * 0.14}) 0%, transparent 65%)`,
+            borderRadius: "50%",
             pointerEvents: "none",
           }}
         />
 
-        {/* Main fact text */}
+        {/* Main fact text — character by character with per-char spring */}
         <h1
           style={{
             fontFamily: fontPrimary,
@@ -232,14 +265,31 @@ export const AstroFact: React.FC<CompositionProps> = ({
             letterSpacing: "3px",
             lineHeight: 1.1,
             margin: 0,
-            textShadow: `
-              0 0 40px rgba(255,68,68,${glowPulse * 0.6}),
-              0 0 80px rgba(255,68,68,${glowPulse * 0.3}),
-              0 2px 4px rgba(0,0,0,0.8)
-            `,
+            display: "flex",
+            flexWrap: "wrap",
+            justifyContent: "center",
+            gap: "0 0.05em",
           }}
         >
-          {text}
+          {chars.map((char, ci) => (
+            <span
+              key={ci}
+              style={{
+                display: "inline-block",
+                opacity: charAnims[ci].opacity,
+                transform: `scale(${charAnims[ci].scale})`,
+                filter: `blur(${charAnims[ci].blur}px)`,
+                textShadow: `
+                  0 0 40px rgba(255,68,68,${glowPulse * 0.6}),
+                  0 0 80px rgba(255,68,68,${glowPulse * 0.3}),
+                  0 2px 4px rgba(0,0,0,0.8)
+                `,
+                whiteSpace: char === " " ? "pre" : "normal",
+              }}
+            >
+              {char}
+            </span>
+          ))}
         </h1>
 
         {/* Red accent line */}
@@ -248,14 +298,14 @@ export const AstroFact: React.FC<CompositionProps> = ({
             width: 100,
             height: 4,
             background: `linear-gradient(90deg, transparent, ${brandColor}, transparent)`,
-            margin: "32px auto 0",
+            margin: `${isShorts ? 40 : 32}px auto 0`,
             boxShadow: `0 0 20px ${brandColor}`,
             borderRadius: 2,
           }}
         />
       </div>
 
-      {/* Bottom branding bar */}
+      {/* Bottom branding bar — slides up */}
       <div
         style={{
           position: "absolute",
