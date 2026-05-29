@@ -1,5 +1,5 @@
 """
-CH6 Shorts Assembler
+Shorts Assembler
 
 Assembles a vertical (9:16, 1080x1920) 60-second short video from a manifest JSON.
 
@@ -7,15 +7,14 @@ Usage:
     python assemble_shorts.py <path/to/manifest.json>
 
 Pipeline per line:
-  1. Generate TTS audio via edge-tts (en-US-GuyNeural, -5% rate, -2Hz pitch)
+  1. Generate TTS audio via edge-tts
   2. Render mograph composition via Remotion at 1080x1920 (9:16)
-  3. Fetch stock footage from Pexels for b_roll_keywords
-  4. Compose each line: scaled/blurred b-roll background + mograph overlay
-  5. Concatenate all line clips
-  6. Mux with combined voiceover audio
-  7. Trim/pad to 60s max
+  3. Compose each line: scale/pad mograph to 1080x1920 (black fallback if render failed)
+  4. Concatenate all line clips
+  5. Mux with combined voiceover audio
+  6. Trim/pad to 60s max
 
-Output: temp/output/ch6_short_{manifest_stem}.mp4
+Output: temp/output/{channel_id}_short_{manifest_stem}.mp4
 Spec:   1080x1920, 30fps, H.264, AAC 192k, max 60 seconds
 """
 
@@ -31,7 +30,6 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
 import edge_tts
-import requests
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -53,11 +51,8 @@ FFMPEG_BIN = os.environ.get("FFMPEG_BIN", "ffmpeg")
 FFPROBE_BIN = os.environ.get("FFPROBE_BIN", "ffprobe")
 REMOTION_DIR = Path(__file__).resolve().parent.parent / "remotion"
 REMOTION_ENTRY = REMOTION_DIR / "src" / "Root.tsx"
-PEXELS_API_BASE = "https://api.pexels.com/videos/search"
-PEXELS_API_KEY = os.environ.get("PEXELS_API_KEY", "")
 RENDER_TIMEOUT = 300  # seconds per Remotion render
 FFMPEG_TIMEOUT = 300  # seconds per FFmpeg call
-DOWNLOAD_CHUNK_SIZE = 256 * 1024  # 256 KB
 
 # CH6 brand defaults (overridden by manifest values)
 DEFAULT_TTS_VOICE = "en-US-GuyNeural"
@@ -308,23 +303,38 @@ def build_mograph_props(
     manifest: Dict[str, Any],
 ) -> Tuple[str, Dict[str, Any]]:
     """Build Remotion composition name and props for a line."""
-    composition = line.get("composition") or line.get("treatment", "AstroFact")
+    composition = line.get("composition") or line.get("treatment", "TextReveal")
     brand_color = manifest.get("brand_color", "#ff4444")
     bg_color = manifest.get("background_color", "#000008")
-    visual_style = manifest.get("visual_style", {})
-    font_primary = visual_style.get("font_primary", "Bebas Neue")
-    font_secondary = visual_style.get("font_secondary", "Space Grotesk")
+    # font_primary / font_secondary live at the manifest top level
+    font_primary = manifest.get("font_primary") or manifest.get("visual_style", {}).get("font_primary", "Bebas Neue")
+    font_secondary = manifest.get("font_secondary") or manifest.get("visual_style", {}).get("font_secondary", "Space Grotesk")
+
+    duration_seconds = line.get("duration_seconds", 7)
+    duration_in_frames = max(1, round(duration_seconds * OUTPUT_FPS))
+
+    # Derive title from manifest topic or metadata
+    title = (
+        manifest.get("topic", {}).get("title")
+        or manifest.get("metadata", {}).get("title")
+        or ""
+    )
+
+    # Start with any extra props the LLM put in line["props"]
+    extra_props = line.get("props") or {}
 
     props = {
+        **extra_props,
         "text": line.get("text", ""),
+        "title": title,
         "brandColor": brand_color,
         "backgroundColor": bg_color,
         "fontPrimary": font_primary,
         "fontSecondary": font_secondary,
-        "duration": max(1, round(line.get("duration_seconds", 7) * OUTPUT_FPS)),
+        "durationInFrames": duration_in_frames,
         "lineNumber": line.get("line_number", 0),
         "lineType": line.get("type", "narration"),
-        "channelId": manifest.get("channel_id", "CH6"),
+        "channelId": manifest.get("channel_id", ""),
         "aspectRatio": "9:16",
     }
     return composition, props
@@ -357,197 +367,24 @@ def render_all_mographs(
 
 
 # ---------------------------------------------------------------------------
-# Pexels stock footage (vertical-friendly)
-# ---------------------------------------------------------------------------
-
-def _pick_best_video_file(
-    video_files: List[Dict[str, Any]], prefer_portrait: bool = True
-) -> Optional[Dict[str, Any]]:
-    """
-    Pick the best quality video file.
-    For shorts we prefer portrait/square, else accept landscape HD.
-    """
-    if prefer_portrait:
-        portrait = [
-            f for f in video_files
-            if f.get("height", 0) >= f.get("width", 1)  # portrait or square
-        ]
-        candidates = portrait if portrait else video_files
-    else:
-        candidates = video_files
-
-    # 1080p preference
-    for f in candidates:
-        if f.get("height", 0) == 1080 or f.get("width", 0) == 1080:
-            return f
-    # HD preference
-    for f in candidates:
-        if f.get("height", 0) >= 720 or f.get("width", 0) >= 720:
-            return f
-    return candidates[0] if candidates else None
-
-
-def fetch_pexels_clip(keywords: List[str], line_number: int) -> Optional[str]:
-    """
-    Search Pexels for stock footage. Returns the best clip URL or None.
-    Tries portrait orientation first, then landscape as fallback.
-    """
-    if not PEXELS_API_KEY:
-        logger.warning("PEXELS_API_KEY not set — skipping stock footage for line %d", line_number)
-        return None
-
-    headers = {"Authorization": PEXELS_API_KEY}
-
-    for query in keywords:
-        for orientation in ("portrait", "landscape"):
-            try:
-                params = {
-                    "query": query,
-                    "orientation": orientation,
-                    "size": "large",
-                    "per_page": 10,
-                }
-                resp = requests.get(
-                    PEXELS_API_BASE,
-                    headers=headers,
-                    params=params,
-                    timeout=30,
-                )
-                resp.raise_for_status()
-                videos = resp.json().get("videos", [])
-                time.sleep(0.5)
-
-                for video in videos:
-                    files = video.get("video_files", [])
-                    if not files:
-                        continue
-                    prefer_portrait = orientation == "portrait"
-                    best = _pick_best_video_file(files, prefer_portrait=prefer_portrait)
-                    if best and best.get("link"):
-                        logger.info(
-                            "Pexels line %d: found '%s' (%dx%d) for '%s' [%s]",
-                            line_number,
-                            video.get("id", "?"),
-                            best.get("width", 0),
-                            best.get("height", 0),
-                            query,
-                            orientation,
-                        )
-                        return best["link"]
-            except requests.HTTPError as exc:
-                logger.warning("Pexels HTTP error line %d '%s': %s", line_number, query, exc)
-            except Exception as exc:  # pylint: disable=broad-except
-                logger.warning("Pexels error line %d '%s': %s", line_number, query, exc)
-
-    logger.warning("No Pexels footage found for line %d keywords: %s", line_number, keywords)
-    return None
-
-
-def download_clip(url: str, output_path: str) -> bool:
-    """Download a video clip. Returns True on success."""
-    out = Path(output_path)
-    out.parent.mkdir(parents=True, exist_ok=True)
-    try:
-        logger.debug("Downloading clip: %s", url)
-        with requests.get(url, stream=True, timeout=120) as resp:
-            resp.raise_for_status()
-            with open(out, "wb") as fh:
-                for chunk in resp.iter_content(chunk_size=DOWNLOAD_CHUNK_SIZE):
-                    fh.write(chunk)
-        logger.info("Downloaded: %s (%.1f MB)", output_path, out.stat().st_size / 1e6)
-        return True
-    except Exception as exc:  # pylint: disable=broad-except
-        logger.error("Download failed: %s — %s", url, exc)
-        if out.exists():
-            out.unlink()
-        return False
-
-
-def fetch_all_broll(
-    manifest: Dict[str, Any],
-    broll_dir: Path,
-) -> Dict[int, Optional[str]]:
-    """Fetch and download b-roll for all lines. Returns {line_number: path_or_None}."""
-    lines = manifest.get("lines", [])
-    broll_map: Dict[int, Optional[str]] = {}
-
-    for line in lines:
-        ln = line.get("line_number", 0)
-        keywords = line.get("b_roll_keywords", [])
-
-        if not keywords:
-            broll_map[ln] = None
-            continue
-
-        url = fetch_pexels_clip(keywords, ln)
-        if url:
-            clip_path = str(broll_dir / f"broll_{ln:04d}.mp4")
-            success = download_clip(url, clip_path)
-            broll_map[ln] = clip_path if success else None
-        else:
-            broll_map[ln] = None
-
-    found = sum(1 for p in broll_map.values() if p)
-    logger.info("B-roll fetch complete: %d/%d lines have footage", found, len(lines))
-    return broll_map
-
-
-# ---------------------------------------------------------------------------
-# Per-line composition: b-roll background + mograph overlay
+# Per-line composition: mograph only (black fallback)
 # ---------------------------------------------------------------------------
 
 def compose_line_clip(
     line: Dict[str, Any],
     mograph_path: Optional[str],
-    broll_path: Optional[str],
     output_path: str,
     temp_dir: Path,
 ) -> bool:
     """
-    Compose a single line clip:
-      - If b-roll available: scale/blur as background, overlay mograph on top
-      - If no b-roll: mograph only (or black fallback)
+    Compose a single line clip using the mograph render.
+    Scales/pads mograph to 1080x1920. Falls back to a black clip if unavailable.
     Output: 1080x1920, OUTPUT_FPS, H.264
     """
     ln = line.get("line_number", 0)
     duration = line.get("duration_seconds", 7.0)
 
-    # Case 1: both b-roll and mograph
-    if broll_path and mograph_path and Path(broll_path).exists() and Path(mograph_path).exists():
-        filter_complex = (
-            # Background: scale b-roll to fill 1080x1920, blur it
-            f"[0:v]scale={OUTPUT_WIDTH}:{OUTPUT_HEIGHT}:force_original_aspect_ratio=increase,"
-            f"crop={OUTPUT_WIDTH}:{OUTPUT_HEIGHT},"
-            f"setsar=1,"
-            f"gblur=sigma=12,"
-            f"fps={OUTPUT_FPS}[bg];"
-            # Foreground: scale mograph to fit within frame (letterbox)
-            f"[1:v]scale={OUTPUT_WIDTH}:{OUTPUT_HEIGHT}:force_original_aspect_ratio=decrease,"
-            f"pad={OUTPUT_WIDTH}:{OUTPUT_HEIGHT}:(ow-iw)/2:(oh-ih)/2:color=black@0,"
-            f"setsar=1,"
-            f"fps={OUTPUT_FPS}[fg];"
-            # Overlay foreground on background
-            f"[bg][fg]overlay=0:0:shortest=1,"
-            f"format=yuv420p[out]"
-        )
-        args = [
-            "-i", broll_path,
-            "-i", mograph_path,
-            "-filter_complex", filter_complex,
-            "-map", "[out]",
-            "-c:v", "libx264",
-            "-preset", "fast",
-            "-crf", "20",
-            "-pix_fmt", "yuv420p",
-            "-t", str(duration),
-            "-an",
-            output_path,
-        ]
-        if _run_ffmpeg(args, f"Compose line {ln} (broll+mograph)"):
-            return True
-        logger.warning("Line %d composition failed, falling back to mograph only", ln)
-
-    # Case 2: mograph only — pad to 1080x1920 if needed
+    # Mograph: scale and pad to 1080x1920
     if mograph_path and Path(mograph_path).exists():
         args = [
             "-i", mograph_path,
@@ -568,27 +405,7 @@ def compose_line_clip(
             return True
         logger.warning("Line %d mograph scale failed, using black fallback", ln)
 
-    # Case 3: b-roll only (scale to portrait, no blur needed for full-frame)
-    if broll_path and Path(broll_path).exists():
-        args = [
-            "-i", broll_path,
-            "-vf", (
-                f"scale={OUTPUT_WIDTH}:{OUTPUT_HEIGHT}:force_original_aspect_ratio=increase,"
-                f"crop={OUTPUT_WIDTH}:{OUTPUT_HEIGHT},"
-                f"setsar=1,fps={OUTPUT_FPS}"
-            ),
-            "-c:v", "libx264",
-            "-preset", "fast",
-            "-crf", "20",
-            "-pix_fmt", "yuv420p",
-            "-t", str(duration),
-            "-an",
-            output_path,
-        ]
-        if _run_ffmpeg(args, f"Scale b-roll line {ln}"):
-            return True
-
-    # Case 4: black fallback
+    # Black fallback
     logger.warning("Line %d: using black fallback clip", ln)
     return _create_black_clip(output_path, duration)
 
@@ -712,23 +529,22 @@ def assemble_short(manifest_path: str) -> str:
     temp_dir = root_dir / "temp" / "assembly_shorts" / manifest_stem
     audio_dir = temp_dir / "audio"
     mograph_dir = temp_dir / "mographs"
-    broll_dir = temp_dir / "broll"
     line_clips_dir = temp_dir / "line_clips"
     output_dir = root_dir / "temp" / "output"
     output_path = str(output_dir / f"{channel_id}_short_{manifest_stem}.mp4")
 
-    for d in [temp_dir, audio_dir, mograph_dir, broll_dir, line_clips_dir, output_dir]:
+    for d in [temp_dir, audio_dir, mograph_dir, line_clips_dir, output_dir]:
         d.mkdir(parents=True, exist_ok=True)
 
     logger.info("=== Assembling short: %s ===", manifest_stem)
     logger.info("Lines: %d | Voice: %s | Rate: %s | Pitch: %s", len(lines), tts_voice, speech_rate, pitch)
 
     # Step 1: Generate TTS for all lines
-    logger.info("Step 1/5: Generating TTS audio...")
+    logger.info("Step 1/4: Generating TTS audio...")
     tts_map = asyncio.run(generate_all_tts(lines, audio_dir, tts_voice, speech_rate, pitch))
 
     # Step 2: Concatenate TTS into single voiceover
-    logger.info("Step 2/5: Concatenating voiceover...")
+    logger.info("Step 2/4: Concatenating voiceover...")
     voiceover_path = str(temp_dir / "voiceover.aac")
     vo_success = concat_tts_lines(tts_map, lines, voiceover_path)
     if not vo_success:
@@ -736,15 +552,11 @@ def assemble_short(manifest_path: str) -> str:
         logger.warning("Voiceover concatenation failed — assembling without audio")
 
     # Step 3: Render mograph compositions
-    logger.info("Step 3/5: Rendering mograph compositions...")
+    logger.info("Step 3/4: Rendering mograph compositions...")
     mograph_map = render_all_mographs(manifest, mograph_dir)
 
-    # Step 4: Fetch b-roll from Pexels
-    logger.info("Step 4/5: Fetching stock footage from Pexels...")
-    broll_map = fetch_all_broll(manifest, broll_dir)
-
-    # Step 5: Compose per-line clips and assemble
-    logger.info("Step 5/5: Composing line clips and assembling final video...")
+    # Step 4: Compose per-line clips and assemble
+    logger.info("Step 4/4: Composing line clips and assembling final video...")
     line_clips: List[str] = []
     for line in sorted(lines, key=lambda l: l.get("line_number", 0)):
         ln = line.get("line_number", 0)
@@ -753,7 +565,6 @@ def assemble_short(manifest_path: str) -> str:
         success = compose_line_clip(
             line=line,
             mograph_path=mograph_map.get(ln),
-            broll_path=broll_map.get(ln),
             output_path=clip_path,
             temp_dir=temp_dir,
         )

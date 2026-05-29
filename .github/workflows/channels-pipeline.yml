@@ -766,7 +766,6 @@ jobs:
           CLOUDINARY_CLOUD_NAME: ${{ secrets.CLOUDINARY_CLOUD_NAME }}
           CLOUDINARY_API_KEY:    ${{ secrets.CLOUDINARY_API_KEY }}
           CLOUDINARY_API_SECRET: ${{ secrets.CLOUDINARY_API_SECRET }}
-          PEXELS_API_KEY:        ${{ secrets.PEXELS_API_KEY }}
 
       - name: Upload Short 1 to YouTube
         run: python scripts/upload_youtube.py temp/manifests/ch1_short_1.json
@@ -816,7 +815,6 @@ jobs:
           CLOUDINARY_CLOUD_NAME: ${{ secrets.CLOUDINARY_CLOUD_NAME }}
           CLOUDINARY_API_KEY:    ${{ secrets.CLOUDINARY_API_KEY }}
           CLOUDINARY_API_SECRET: ${{ secrets.CLOUDINARY_API_SECRET }}
-          PEXELS_API_KEY:        ${{ secrets.PEXELS_API_KEY }}
 
       - name: Upload Short 2 to YouTube
         run: python scripts/upload_youtube.py temp/manifests/ch1_short_2.json
@@ -914,7 +912,6 @@ jobs:
           CLOUDINARY_CLOUD_NAME: ${{ secrets.CLOUDINARY_CLOUD_NAME }}
           CLOUDINARY_API_KEY: ${{ secrets.CLOUDINARY_API_KEY }}
           CLOUDINARY_API_SECRET: ${{ secrets.CLOUDINARY_API_SECRET }}
-          PEXELS_API_KEY: ${{ secrets.PEXELS_API_KEY }}
 
       - name: Upload Short 1 to YouTube
         run: python scripts/upload_youtube.py temp/manifests/ch2_short_1.json
@@ -964,7 +961,6 @@ jobs:
           CLOUDINARY_CLOUD_NAME: ${{ secrets.CLOUDINARY_CLOUD_NAME }}
           CLOUDINARY_API_KEY: ${{ secrets.CLOUDINARY_API_KEY }}
           CLOUDINARY_API_SECRET: ${{ secrets.CLOUDINARY_API_SECRET }}
-          PEXELS_API_KEY: ${{ secrets.PEXELS_API_KEY }}
 
       - name: Upload Short 2 to YouTube
         run: python scripts/upload_youtube.py temp/manifests/ch2_short_2.json
@@ -1059,7 +1055,6 @@ jobs:
           CLOUDINARY_CLOUD_NAME: ${{ secrets.CLOUDINARY_CLOUD_NAME }}
           CLOUDINARY_API_KEY: ${{ secrets.CLOUDINARY_API_KEY }}
           CLOUDINARY_API_SECRET: ${{ secrets.CLOUDINARY_API_SECRET }}
-          PEXELS_API_KEY: ${{ secrets.PEXELS_API_KEY }}
 
       - name: Upload Short 1 to YouTube
         run: python scripts/upload_youtube.py temp/manifests/ch3_short_1.json
@@ -1109,7 +1104,6 @@ jobs:
           CLOUDINARY_CLOUD_NAME: ${{ secrets.CLOUDINARY_CLOUD_NAME }}
           CLOUDINARY_API_KEY: ${{ secrets.CLOUDINARY_API_KEY }}
           CLOUDINARY_API_SECRET: ${{ secrets.CLOUDINARY_API_SECRET }}
-          PEXELS_API_KEY: ${{ secrets.PEXELS_API_KEY }}
 
       - name: Upload Short 2 to YouTube
         run: python scripts/upload_youtube.py temp/manifests/ch3_short_2.json
@@ -1204,7 +1198,6 @@ jobs:
           CLOUDINARY_CLOUD_NAME: ${{ secrets.CLOUDINARY_CLOUD_NAME }}
           CLOUDINARY_API_KEY: ${{ secrets.CLOUDINARY_API_KEY }}
           CLOUDINARY_API_SECRET: ${{ secrets.CLOUDINARY_API_SECRET }}
-          PEXELS_API_KEY: ${{ secrets.PEXELS_API_KEY }}
 
       - name: Upload Short 1 to YouTube
         run: python scripts/upload_youtube.py temp/manifests/ch4_short_1.json
@@ -1254,7 +1247,6 @@ jobs:
           CLOUDINARY_CLOUD_NAME: ${{ secrets.CLOUDINARY_CLOUD_NAME }}
           CLOUDINARY_API_KEY: ${{ secrets.CLOUDINARY_API_KEY }}
           CLOUDINARY_API_SECRET: ${{ secrets.CLOUDINARY_API_SECRET }}
-          PEXELS_API_KEY: ${{ secrets.PEXELS_API_KEY }}
 
       - name: Upload Short 2 to YouTube
         run: python scripts/upload_youtube.py temp/manifests/ch4_short_2.json
@@ -1349,7 +1341,6 @@ jobs:
           CLOUDINARY_CLOUD_NAME: ${{ secrets.CLOUDINARY_CLOUD_NAME }}
           CLOUDINARY_API_KEY: ${{ secrets.CLOUDINARY_API_KEY }}
           CLOUDINARY_API_SECRET: ${{ secrets.CLOUDINARY_API_SECRET }}
-          PEXELS_API_KEY: ${{ secrets.PEXELS_API_KEY }}
 
       - name: Upload Short 1 to YouTube
         run: python scripts/upload_youtube.py temp/manifests/ch5_short_1.json
@@ -1399,7 +1390,6 @@ jobs:
           CLOUDINARY_CLOUD_NAME: ${{ secrets.CLOUDINARY_CLOUD_NAME }}
           CLOUDINARY_API_KEY: ${{ secrets.CLOUDINARY_API_KEY }}
           CLOUDINARY_API_SECRET: ${{ secrets.CLOUDINARY_API_SECRET }}
-          PEXELS_API_KEY: ${{ secrets.PEXELS_API_KEY }}
 
       - name: Upload Short 2 to YouTube
         run: python scripts/upload_youtube.py temp/manifests/ch5_short_2.json

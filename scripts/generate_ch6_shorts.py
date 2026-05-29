@@ -213,7 +213,7 @@ Return ONLY a JSON object with this exact structure:
       "text": "narration text for this line",
       "duration_seconds": 7,
       "composition": "CompositionName",
-      "b_roll_keywords": ["keyword1", "keyword2", "keyword3"]
+      "props": {}
     }}
     // ... 8 lines total
   ],
@@ -231,7 +231,7 @@ No markdown. No explanation. Just the JSON object."""
     raw = _call_llm(prompt, system=system)
     manifest_core = _parse_json(raw)
 
-    # Validate line count
+    # Validate and clean lines
     lines = manifest_core.get("lines", [])
     if len(lines) != 8:
         logger.warning(
@@ -239,6 +239,11 @@ No markdown. No explanation. Just the JSON object."""
             len(lines),
             short_index,
         )
+    # Inject line_number if LLM omitted it; strip b_roll_keywords
+    for i, line in enumerate(lines, start=1):
+        if not line.get("line_number"):
+            line["line_number"] = i
+        line.pop("b_roll_keywords", None)
 
     # Assemble full manifest
     manifest = {
