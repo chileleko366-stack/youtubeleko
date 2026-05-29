@@ -715,7 +715,7 @@ def assemble_short(manifest_path: str) -> str:
     broll_dir = temp_dir / "broll"
     line_clips_dir = temp_dir / "line_clips"
     output_dir = root_dir / "temp" / "output"
-    output_path = str(output_dir / f"ch6_short_{manifest_stem}.mp4")
+    output_path = str(output_dir / f"{channel_id}_short_{manifest_stem}.mp4")
 
     for d in [temp_dir, audio_dir, mograph_dir, broll_dir, line_clips_dir, output_dir]:
         d.mkdir(parents=True, exist_ok=True)
@@ -770,6 +770,37 @@ def assemble_short(manifest_path: str) -> str:
         raise RuntimeError(f"Final assembly failed for {manifest_stem}")
 
     logger.info("=== Assembly complete: %s ===", output_path)
+
+    # Upload to Cloudinary
+    try:
+        import cloudinary  # pylint: disable=import-outside-toplevel
+        import cloudinary.uploader  # pylint: disable=import-outside-toplevel
+        from datetime import date  # pylint: disable=import-outside-toplevel
+        missing = [v for v in ("CLOUDINARY_CLOUD_NAME", "CLOUDINARY_API_KEY", "CLOUDINARY_API_SECRET")
+                   if not os.environ.get(v)]
+        if missing:
+            logger.warning("Cloudinary secrets missing (%s) — skipping upload", missing)
+        else:
+            cloudinary.config(
+                cloud_name=os.environ["CLOUDINARY_CLOUD_NAME"],
+                api_key=os.environ["CLOUDINARY_API_KEY"],
+                api_secret=os.environ["CLOUDINARY_API_SECRET"],
+                secure=True,
+            )
+            date_str = date.today().isoformat()
+            public_id = f"automation/shorts/{date_str}/{channel_id}_{manifest_stem}"
+            result = cloudinary.uploader.upload_large(
+                output_path,
+                public_id=public_id,
+                resource_type="video",
+                overwrite=True,
+                chunk_size=6_000_000,
+            )
+            cld_url = result.get("secure_url", "")
+            logger.info("Uploaded to Cloudinary: %s", cld_url)
+    except Exception as exc:  # pylint: disable=broad-except
+        logger.warning("Cloudinary upload failed (non-fatal): %s", exc)
+
     return output_path
 
 

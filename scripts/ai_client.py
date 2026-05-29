@@ -46,7 +46,7 @@ _OPENAI_COMPAT_PROVIDERS = [
         "name": "Cerebras",
         "env_key": "CEREBRAS_API_KEY",
         "base_url": "https://api.cerebras.ai/v1",
-        "models": ["llama-3.3-70b", "llama3.1-70b", "llama3.1-8b"],
+        "models": ["llama-3.3-70b", "llama3.3-70b", "llama3.1-70b"],
     },
     {
         "name": "Groq",
@@ -254,6 +254,16 @@ def _pollinations_generate(messages: list, temperature: float) -> str:
                 raise ValueError("Empty response")
             if content.startswith("⚠️") or "being deprecated" in content:
                 raise ValueError("Pollinations returned deprecation notice instead of JSON")
+            # Unwrap {"role":"assistant","content":"..."} envelope if present
+            try:
+                import json as _json
+                wrapper = _json.loads(content)
+                if isinstance(wrapper, dict) and "content" in wrapper and "role" in wrapper:
+                    content = wrapper["content"]
+                    if isinstance(content, list):
+                        content = " ".join(c.get("text", "") if isinstance(c, dict) else str(c) for c in content)
+            except Exception:
+                pass
             logger.info("Pollinations succeeded.")
             return content
         except Exception as exc:

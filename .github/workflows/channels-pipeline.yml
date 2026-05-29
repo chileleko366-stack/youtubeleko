@@ -429,8 +429,8 @@ jobs:
           from scripts.render_mographs      import render_all_lines
           from scripts.assemble_video       import assemble_video
           from scripts.upload_youtube       import upload_video, is_youtube_configured
-          from scripts.upload_drive         import backup_to_drive
           from scripts.telegram_notify      import send_message
+          import cloudinary, cloudinary.uploader
 
           cloud        = os.environ["CLOUDINARY_CLOUD_NAME"]
           date_str     = os.environ.get("MANIFEST_DATE", date.today().isoformat())
@@ -546,18 +546,29 @@ jobs:
               step["assembly"] = "ok"
               print(f"  [5/6] ✓ Video assembled → {out}")
 
-              # ── 7. Google Drive backup ────────────────────────────────────
-              print("  [6a/6] Backing up to Google Drive...")
-              drive_id  = None
-              drive_url = None
+              # ── 7. Cloudinary backup ─────────────────────────────────────
+              print("  [6a/6] Uploading video to Cloudinary...")
+              cld_url = None
               try:
-                  drive_id  = backup_to_drive(out, ch_id, date_str)
-                  drive_url = f"https://drive.google.com/file/d/{drive_id}" if drive_id else None
-                  step["drive"] = "ok"
-                  print(f"  [6a/6] ✓ Drive backup → {drive_url}")
+                  cloudinary.config(
+                      cloud_name=os.environ["CLOUDINARY_CLOUD_NAME"],
+                      api_key=os.environ["CLOUDINARY_API_KEY"],
+                      api_secret=os.environ["CLOUDINARY_API_SECRET"],
+                      secure=True,
+                  )
+                  cld_result = cloudinary.uploader.upload_large(
+                      out,
+                      public_id=f"automation/videos/{date_str}/{ch_id}_longform",
+                      resource_type="video",
+                      overwrite=True,
+                      chunk_size=6_000_000,
+                  )
+                  cld_url = cld_result.get("secure_url")
+                  step["cloudinary"] = "ok"
+                  print(f"  [6a/6] ✓ Cloudinary → {cld_url}")
               except Exception as exc:
-                  step["drive"] = f"warn: {exc}"
-                  print(f"  [6a/6] ⚠️  Drive: {exc}")
+                  step["cloudinary"] = f"warn: {exc}"
+                  print(f"  [6a/6] ⚠️  Cloudinary: {exc}")
 
               # ── 8. YouTube upload ─────────────────────────────────────────
               print(f"  [6b/6] Uploading to YouTube ({ch_id.upper()})...")
@@ -570,7 +581,7 @@ jobs:
                       send_message(
                           f"{icon} *{ch_id.upper()} {name}* — ✅ UPLOADED\n"
                           f"*{title}*\n{yt_url}"
-                          + (f"\nDrive: {drive_url}" if drive_url else "")
+                          + (f"\nCloudinary: {cld_url}" if cld_url else "")
                       )
                   else:
                       step["youtube"] = "upload failed"
@@ -578,7 +589,7 @@ jobs:
                       send_message(
                           f"{icon} *{ch_id.upper()} {name}* — ⚠️ Assembled, YouTube failed\n"
                           f"*{title}*"
-                          + (f"\nDrive backup: {drive_url}" if drive_url else "")
+                          + (f"\nCloudinary: {cld_url}" if cld_url else "")
                       )
               else:
                   step["youtube"] = "not configured"
@@ -586,7 +597,7 @@ jobs:
                   send_message(
                       f"{icon} *{ch_id.upper()} {name}* — ✅ Assembled (YouTube not configured)\n"
                       f"*{title}*"
-                      + (f"\nDrive: {drive_url}" if drive_url else "")
+                      + (f"\nCloudinary: {cld_url}" if cld_url else "")
                   )
 
               elapsed = round(time.time() - t0)
@@ -764,9 +775,28 @@ jobs:
           YOUTUBE_CLIENT_SECRET:     ${{ secrets.YOUTUBE_CLIENT_SECRET }}
           YOUTUBE_REFRESH_TOKEN_CH1: ${{ secrets.YOUTUBE_REFRESH_TOKEN_CH1 }}
 
-      - name: Backup Short 1 to Google Drive
-        run: python scripts/upload_drive.py temp/manifests/ch1_short_1.json
-        env: { GOOGLE_DRIVE_CREDENTIALS: "${{ secrets.GOOGLE_DRIVE_CREDENTIALS }}" }
+      - name: Upload Short 1 video to Cloudinary
+        run: |
+          python - <<'PYEOF'
+          import cloudinary, cloudinary.uploader, glob, os, sys
+          cloudinary.config(
+            cloud_name=os.environ["CLOUDINARY_CLOUD_NAME"],
+            api_key=os.environ["CLOUDINARY_API_KEY"],
+            api_secret=os.environ["CLOUDINARY_API_SECRET"],
+            secure=True,
+          )
+          videos = sorted(glob.glob("temp/shorts/ch1_short_1_*.mp4"))
+          if not videos:
+            print("No short video found to upload to Cloudinary — skipping")
+            sys.exit(0)
+          path = videos[-1]
+          result = cloudinary.uploader.upload_large(path, public_id=f"automation/shorts/ch1_short_1", resource_type="video", overwrite=True, chunk_size=6000000)
+          print("Cloudinary URL:", result.get("secure_url"))
+          PYEOF
+        env:
+          CLOUDINARY_CLOUD_NAME: ${{ secrets.CLOUDINARY_CLOUD_NAME }}
+          CLOUDINARY_API_KEY:    ${{ secrets.CLOUDINARY_API_KEY }}
+          CLOUDINARY_API_SECRET: ${{ secrets.CLOUDINARY_API_SECRET }}
         continue-on-error: true
 
       - name: Generate + assemble Short 2
@@ -795,9 +825,28 @@ jobs:
           YOUTUBE_CLIENT_SECRET:     ${{ secrets.YOUTUBE_CLIENT_SECRET }}
           YOUTUBE_REFRESH_TOKEN_CH1: ${{ secrets.YOUTUBE_REFRESH_TOKEN_CH1 }}
 
-      - name: Backup Short 2 to Google Drive
-        run: python scripts/upload_drive.py temp/manifests/ch1_short_2.json
-        env: { GOOGLE_DRIVE_CREDENTIALS: "${{ secrets.GOOGLE_DRIVE_CREDENTIALS }}" }
+      - name: Upload Short 2 video to Cloudinary
+        run: |
+          python - <<'PYEOF'
+          import cloudinary, cloudinary.uploader, glob, os, sys
+          cloudinary.config(
+            cloud_name=os.environ["CLOUDINARY_CLOUD_NAME"],
+            api_key=os.environ["CLOUDINARY_API_KEY"],
+            api_secret=os.environ["CLOUDINARY_API_SECRET"],
+            secure=True,
+          )
+          videos = sorted(glob.glob("temp/shorts/ch1_short_2_*.mp4"))
+          if not videos:
+            print("No short video found to upload to Cloudinary — skipping")
+            sys.exit(0)
+          path = videos[-1]
+          result = cloudinary.uploader.upload_large(path, public_id=f"automation/shorts/ch1_short_2", resource_type="video", overwrite=True, chunk_size=6000000)
+          print("Cloudinary URL:", result.get("secure_url"))
+          PYEOF
+        env:
+          CLOUDINARY_CLOUD_NAME: ${{ secrets.CLOUDINARY_CLOUD_NAME }}
+          CLOUDINARY_API_KEY:    ${{ secrets.CLOUDINARY_API_KEY }}
+          CLOUDINARY_API_SECRET: ${{ secrets.CLOUDINARY_API_SECRET }}
         continue-on-error: true
 
       - name: Notify CH1 shorts complete
@@ -874,9 +923,28 @@ jobs:
           YOUTUBE_CLIENT_SECRET: ${{ secrets.YOUTUBE_CLIENT_SECRET }}
           YOUTUBE_REFRESH_TOKEN_CH2: ${{ secrets.YOUTUBE_REFRESH_TOKEN_CH2 }}
 
-      - name: Backup Short 1 to Google Drive
-        run: python scripts/upload_drive.py temp/manifests/ch2_short_1.json
-        env: { GOOGLE_DRIVE_CREDENTIALS: "${{ secrets.GOOGLE_DRIVE_CREDENTIALS }}" }
+      - name: Upload Short 1 video to Cloudinary
+        run: |
+          python - <<'PYEOF'
+          import cloudinary, cloudinary.uploader, glob, os, sys
+          cloudinary.config(
+            cloud_name=os.environ["CLOUDINARY_CLOUD_NAME"],
+            api_key=os.environ["CLOUDINARY_API_KEY"],
+            api_secret=os.environ["CLOUDINARY_API_SECRET"],
+            secure=True,
+          )
+          videos = sorted(glob.glob("temp/shorts/ch2_short_1_*.mp4"))
+          if not videos:
+            print("No short video found to upload to Cloudinary — skipping")
+            sys.exit(0)
+          path = videos[-1]
+          result = cloudinary.uploader.upload_large(path, public_id=f"automation/shorts/ch2_short_1", resource_type="video", overwrite=True, chunk_size=6000000)
+          print("Cloudinary URL:", result.get("secure_url"))
+          PYEOF
+        env:
+          CLOUDINARY_CLOUD_NAME: ${{ secrets.CLOUDINARY_CLOUD_NAME }}
+          CLOUDINARY_API_KEY:    ${{ secrets.CLOUDINARY_API_KEY }}
+          CLOUDINARY_API_SECRET: ${{ secrets.CLOUDINARY_API_SECRET }}
         continue-on-error: true
 
       - name: Generate + assemble Short 2
@@ -905,9 +973,28 @@ jobs:
           YOUTUBE_CLIENT_SECRET: ${{ secrets.YOUTUBE_CLIENT_SECRET }}
           YOUTUBE_REFRESH_TOKEN_CH2: ${{ secrets.YOUTUBE_REFRESH_TOKEN_CH2 }}
 
-      - name: Backup Short 2 to Google Drive
-        run: python scripts/upload_drive.py temp/manifests/ch2_short_2.json
-        env: { GOOGLE_DRIVE_CREDENTIALS: "${{ secrets.GOOGLE_DRIVE_CREDENTIALS }}" }
+      - name: Upload Short 2 video to Cloudinary
+        run: |
+          python - <<'PYEOF'
+          import cloudinary, cloudinary.uploader, glob, os, sys
+          cloudinary.config(
+            cloud_name=os.environ["CLOUDINARY_CLOUD_NAME"],
+            api_key=os.environ["CLOUDINARY_API_KEY"],
+            api_secret=os.environ["CLOUDINARY_API_SECRET"],
+            secure=True,
+          )
+          videos = sorted(glob.glob("temp/shorts/ch2_short_2_*.mp4"))
+          if not videos:
+            print("No short video found to upload to Cloudinary — skipping")
+            sys.exit(0)
+          path = videos[-1]
+          result = cloudinary.uploader.upload_large(path, public_id=f"automation/shorts/ch2_short_2", resource_type="video", overwrite=True, chunk_size=6000000)
+          print("Cloudinary URL:", result.get("secure_url"))
+          PYEOF
+        env:
+          CLOUDINARY_CLOUD_NAME: ${{ secrets.CLOUDINARY_CLOUD_NAME }}
+          CLOUDINARY_API_KEY:    ${{ secrets.CLOUDINARY_API_KEY }}
+          CLOUDINARY_API_SECRET: ${{ secrets.CLOUDINARY_API_SECRET }}
         continue-on-error: true
 
       - name: Notify CH2 shorts complete
@@ -981,9 +1068,28 @@ jobs:
           YOUTUBE_CLIENT_SECRET: ${{ secrets.YOUTUBE_CLIENT_SECRET }}
           YOUTUBE_REFRESH_TOKEN_CH3: ${{ secrets.YOUTUBE_REFRESH_TOKEN_CH3 }}
 
-      - name: Backup Short 1 to Google Drive
-        run: python scripts/upload_drive.py temp/manifests/ch3_short_1.json
-        env: { GOOGLE_DRIVE_CREDENTIALS: "${{ secrets.GOOGLE_DRIVE_CREDENTIALS }}" }
+      - name: Upload Short 1 video to Cloudinary
+        run: |
+          python - <<'PYEOF'
+          import cloudinary, cloudinary.uploader, glob, os, sys
+          cloudinary.config(
+            cloud_name=os.environ["CLOUDINARY_CLOUD_NAME"],
+            api_key=os.environ["CLOUDINARY_API_KEY"],
+            api_secret=os.environ["CLOUDINARY_API_SECRET"],
+            secure=True,
+          )
+          videos = sorted(glob.glob("temp/shorts/ch3_short_1_*.mp4"))
+          if not videos:
+            print("No short video found to upload to Cloudinary — skipping")
+            sys.exit(0)
+          path = videos[-1]
+          result = cloudinary.uploader.upload_large(path, public_id=f"automation/shorts/ch3_short_1", resource_type="video", overwrite=True, chunk_size=6000000)
+          print("Cloudinary URL:", result.get("secure_url"))
+          PYEOF
+        env:
+          CLOUDINARY_CLOUD_NAME: ${{ secrets.CLOUDINARY_CLOUD_NAME }}
+          CLOUDINARY_API_KEY:    ${{ secrets.CLOUDINARY_API_KEY }}
+          CLOUDINARY_API_SECRET: ${{ secrets.CLOUDINARY_API_SECRET }}
         continue-on-error: true
 
       - name: Generate + assemble Short 2
@@ -1012,9 +1118,28 @@ jobs:
           YOUTUBE_CLIENT_SECRET: ${{ secrets.YOUTUBE_CLIENT_SECRET }}
           YOUTUBE_REFRESH_TOKEN_CH3: ${{ secrets.YOUTUBE_REFRESH_TOKEN_CH3 }}
 
-      - name: Backup Short 2 to Google Drive
-        run: python scripts/upload_drive.py temp/manifests/ch3_short_2.json
-        env: { GOOGLE_DRIVE_CREDENTIALS: "${{ secrets.GOOGLE_DRIVE_CREDENTIALS }}" }
+      - name: Upload Short 2 video to Cloudinary
+        run: |
+          python - <<'PYEOF'
+          import cloudinary, cloudinary.uploader, glob, os, sys
+          cloudinary.config(
+            cloud_name=os.environ["CLOUDINARY_CLOUD_NAME"],
+            api_key=os.environ["CLOUDINARY_API_KEY"],
+            api_secret=os.environ["CLOUDINARY_API_SECRET"],
+            secure=True,
+          )
+          videos = sorted(glob.glob("temp/shorts/ch3_short_2_*.mp4"))
+          if not videos:
+            print("No short video found to upload to Cloudinary — skipping")
+            sys.exit(0)
+          path = videos[-1]
+          result = cloudinary.uploader.upload_large(path, public_id=f"automation/shorts/ch3_short_2", resource_type="video", overwrite=True, chunk_size=6000000)
+          print("Cloudinary URL:", result.get("secure_url"))
+          PYEOF
+        env:
+          CLOUDINARY_CLOUD_NAME: ${{ secrets.CLOUDINARY_CLOUD_NAME }}
+          CLOUDINARY_API_KEY:    ${{ secrets.CLOUDINARY_API_KEY }}
+          CLOUDINARY_API_SECRET: ${{ secrets.CLOUDINARY_API_SECRET }}
         continue-on-error: true
 
       - name: Notify CH3 shorts complete
@@ -1088,9 +1213,28 @@ jobs:
           YOUTUBE_CLIENT_SECRET: ${{ secrets.YOUTUBE_CLIENT_SECRET }}
           YOUTUBE_REFRESH_TOKEN_CH4: ${{ secrets.YOUTUBE_REFRESH_TOKEN_CH4 }}
 
-      - name: Backup Short 1 to Google Drive
-        run: python scripts/upload_drive.py temp/manifests/ch4_short_1.json
-        env: { GOOGLE_DRIVE_CREDENTIALS: "${{ secrets.GOOGLE_DRIVE_CREDENTIALS }}" }
+      - name: Upload Short 1 video to Cloudinary
+        run: |
+          python - <<'PYEOF'
+          import cloudinary, cloudinary.uploader, glob, os, sys
+          cloudinary.config(
+            cloud_name=os.environ["CLOUDINARY_CLOUD_NAME"],
+            api_key=os.environ["CLOUDINARY_API_KEY"],
+            api_secret=os.environ["CLOUDINARY_API_SECRET"],
+            secure=True,
+          )
+          videos = sorted(glob.glob("temp/shorts/ch4_short_1_*.mp4"))
+          if not videos:
+            print("No short video found to upload to Cloudinary — skipping")
+            sys.exit(0)
+          path = videos[-1]
+          result = cloudinary.uploader.upload_large(path, public_id=f"automation/shorts/ch4_short_1", resource_type="video", overwrite=True, chunk_size=6000000)
+          print("Cloudinary URL:", result.get("secure_url"))
+          PYEOF
+        env:
+          CLOUDINARY_CLOUD_NAME: ${{ secrets.CLOUDINARY_CLOUD_NAME }}
+          CLOUDINARY_API_KEY:    ${{ secrets.CLOUDINARY_API_KEY }}
+          CLOUDINARY_API_SECRET: ${{ secrets.CLOUDINARY_API_SECRET }}
         continue-on-error: true
 
       - name: Generate + assemble Short 2
@@ -1119,9 +1263,28 @@ jobs:
           YOUTUBE_CLIENT_SECRET: ${{ secrets.YOUTUBE_CLIENT_SECRET }}
           YOUTUBE_REFRESH_TOKEN_CH4: ${{ secrets.YOUTUBE_REFRESH_TOKEN_CH4 }}
 
-      - name: Backup Short 2 to Google Drive
-        run: python scripts/upload_drive.py temp/manifests/ch4_short_2.json
-        env: { GOOGLE_DRIVE_CREDENTIALS: "${{ secrets.GOOGLE_DRIVE_CREDENTIALS }}" }
+      - name: Upload Short 2 video to Cloudinary
+        run: |
+          python - <<'PYEOF'
+          import cloudinary, cloudinary.uploader, glob, os, sys
+          cloudinary.config(
+            cloud_name=os.environ["CLOUDINARY_CLOUD_NAME"],
+            api_key=os.environ["CLOUDINARY_API_KEY"],
+            api_secret=os.environ["CLOUDINARY_API_SECRET"],
+            secure=True,
+          )
+          videos = sorted(glob.glob("temp/shorts/ch4_short_2_*.mp4"))
+          if not videos:
+            print("No short video found to upload to Cloudinary — skipping")
+            sys.exit(0)
+          path = videos[-1]
+          result = cloudinary.uploader.upload_large(path, public_id=f"automation/shorts/ch4_short_2", resource_type="video", overwrite=True, chunk_size=6000000)
+          print("Cloudinary URL:", result.get("secure_url"))
+          PYEOF
+        env:
+          CLOUDINARY_CLOUD_NAME: ${{ secrets.CLOUDINARY_CLOUD_NAME }}
+          CLOUDINARY_API_KEY:    ${{ secrets.CLOUDINARY_API_KEY }}
+          CLOUDINARY_API_SECRET: ${{ secrets.CLOUDINARY_API_SECRET }}
         continue-on-error: true
 
       - name: Notify CH4 shorts complete
@@ -1195,9 +1358,28 @@ jobs:
           YOUTUBE_CLIENT_SECRET: ${{ secrets.YOUTUBE_CLIENT_SECRET }}
           YOUTUBE_REFRESH_TOKEN_CH5: ${{ secrets.YOUTUBE_REFRESH_TOKEN_CH5 }}
 
-      - name: Backup Short 1 to Google Drive
-        run: python scripts/upload_drive.py temp/manifests/ch5_short_1.json
-        env: { GOOGLE_DRIVE_CREDENTIALS: "${{ secrets.GOOGLE_DRIVE_CREDENTIALS }}" }
+      - name: Upload Short 1 video to Cloudinary
+        run: |
+          python - <<'PYEOF'
+          import cloudinary, cloudinary.uploader, glob, os, sys
+          cloudinary.config(
+            cloud_name=os.environ["CLOUDINARY_CLOUD_NAME"],
+            api_key=os.environ["CLOUDINARY_API_KEY"],
+            api_secret=os.environ["CLOUDINARY_API_SECRET"],
+            secure=True,
+          )
+          videos = sorted(glob.glob("temp/shorts/ch5_short_1_*.mp4"))
+          if not videos:
+            print("No short video found to upload to Cloudinary — skipping")
+            sys.exit(0)
+          path = videos[-1]
+          result = cloudinary.uploader.upload_large(path, public_id=f"automation/shorts/ch5_short_1", resource_type="video", overwrite=True, chunk_size=6000000)
+          print("Cloudinary URL:", result.get("secure_url"))
+          PYEOF
+        env:
+          CLOUDINARY_CLOUD_NAME: ${{ secrets.CLOUDINARY_CLOUD_NAME }}
+          CLOUDINARY_API_KEY:    ${{ secrets.CLOUDINARY_API_KEY }}
+          CLOUDINARY_API_SECRET: ${{ secrets.CLOUDINARY_API_SECRET }}
         continue-on-error: true
 
       - name: Generate + assemble Short 2
@@ -1226,9 +1408,28 @@ jobs:
           YOUTUBE_CLIENT_SECRET: ${{ secrets.YOUTUBE_CLIENT_SECRET }}
           YOUTUBE_REFRESH_TOKEN_CH5: ${{ secrets.YOUTUBE_REFRESH_TOKEN_CH5 }}
 
-      - name: Backup Short 2 to Google Drive
-        run: python scripts/upload_drive.py temp/manifests/ch5_short_2.json
-        env: { GOOGLE_DRIVE_CREDENTIALS: "${{ secrets.GOOGLE_DRIVE_CREDENTIALS }}" }
+      - name: Upload Short 2 video to Cloudinary
+        run: |
+          python - <<'PYEOF'
+          import cloudinary, cloudinary.uploader, glob, os, sys
+          cloudinary.config(
+            cloud_name=os.environ["CLOUDINARY_CLOUD_NAME"],
+            api_key=os.environ["CLOUDINARY_API_KEY"],
+            api_secret=os.environ["CLOUDINARY_API_SECRET"],
+            secure=True,
+          )
+          videos = sorted(glob.glob("temp/shorts/ch5_short_2_*.mp4"))
+          if not videos:
+            print("No short video found to upload to Cloudinary — skipping")
+            sys.exit(0)
+          path = videos[-1]
+          result = cloudinary.uploader.upload_large(path, public_id=f"automation/shorts/ch5_short_2", resource_type="video", overwrite=True, chunk_size=6000000)
+          print("Cloudinary URL:", result.get("secure_url"))
+          PYEOF
+        env:
+          CLOUDINARY_CLOUD_NAME: ${{ secrets.CLOUDINARY_CLOUD_NAME }}
+          CLOUDINARY_API_KEY:    ${{ secrets.CLOUDINARY_API_KEY }}
+          CLOUDINARY_API_SECRET: ${{ secrets.CLOUDINARY_API_SECRET }}
         continue-on-error: true
 
       - name: Notify CH5 shorts complete
