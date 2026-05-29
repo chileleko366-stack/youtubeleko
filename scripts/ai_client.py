@@ -239,7 +239,7 @@ def _pollinations_generate(messages: list, temperature: float) -> str:
                 _POLLINATIONS_URL,
                 json={
                     "messages": messages,
-                    "model": "openai",
+                    "model": "openai-large",
                     "private": True,
                     "seed": int(time.time()) % 99999,
                     "temperature": temperature,
