@@ -2,8 +2,8 @@
 AI Client — tries EVERY free provider in priority order until one succeeds.
 
 Provider priority (add keys to GitHub Secrets — all are free, no credit card):
-  1. Groq         — GROQ_API_KEY                                     200K TPD  console.groq.com
-  2. Cerebras     — CEREBRAS_API_KEY                                  free tier cloud.cerebras.ai
+  1. Cerebras     — CEREBRAS_API_KEY                                  free tier cloud.cerebras.ai
+  2. Groq         — GROQ_API_KEY                                     200K TPD  console.groq.com
   3. SambaNova    — SAMBANOVA_API_KEY                               generous   cloud.sambanova.ai
   4. Gemini       — GEMINI_API_KEY (from aistudio.google.com ONLY!)  1M TPD    aistudio.google.com
   5. GitHub       — GITHUB_TOKEN (auto-set in Actions, no secret!)   150 RPD   models.inference.ai.azure.com
@@ -43,17 +43,16 @@ RETRY_DELAY = 5.0
 
 _OPENAI_COMPAT_PROVIDERS = [
     {
+        "name": "Cerebras",
+        "env_key": "CEREBRAS_API_KEY",
+        "base_url": "https://api.cerebras.ai/v1",
+        "models": ["llama-3.3-70b", "llama3.1-70b", "llama3.1-8b"],
+    },
+    {
         "name": "Groq",
         "env_key": "GROQ_API_KEY",
         "base_url": "https://api.groq.com/openai/v1",
         "models": ["llama-3.3-70b-versatile", "llama-3.1-70b-versatile"],
-    },
-    {
-        # Free tier only includes 8B — 70B models return 404 without a paid plan
-        "name": "Cerebras",
-        "env_key": "CEREBRAS_API_KEY",
-        "base_url": "https://api.cerebras.ai/v1",
-        "models": ["llama3.1-8b"],
     },
     {
         "name": "SambaNova",
@@ -324,8 +323,8 @@ class AIClient:
         if not named:
             logger.warning(
                 "No API keys configured — using Pollinations only (unreliable). "
-                "Add GROQ_API_KEY to GitHub Secrets for free at console.groq.com, "
-                "or CEREBRAS_API_KEY at cloud.cerebras.ai. Both are no-credit-card free."
+                "Add CEREBRAS_API_KEY to GitHub Secrets for free at cloud.cerebras.ai, "
+                "or GROQ_API_KEY at console.groq.com. Both are no-credit-card free."
             )
 
     @property
