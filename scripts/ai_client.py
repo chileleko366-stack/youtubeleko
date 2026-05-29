@@ -261,11 +261,8 @@ def _pollinations_generate(messages: list, temperature: float) -> str:
                 import re as _re
                 wrapper = _json.loads(content)
                 if isinstance(wrapper, dict) and "role" in wrapper:
-                    # Try content field first
-                    inner = wrapper.get("content")
-                    if inner is None:
-                        # Fall back to reasoning field — extract JSON from it
-                        inner = wrapper.get("reasoning", "")
+                    # Try content field first, then reasoning
+                    inner = wrapper.get("content") or wrapper.get("reasoning", "")
                     if isinstance(inner, list):
                         inner = " ".join(c.get("text", "") if isinstance(c, dict) else str(c) for c in inner)
                     if isinstance(inner, str) and inner.strip():
@@ -274,9 +271,20 @@ def _pollinations_generate(messages: list, temperature: float) -> str:
                         if block:
                             content = block.group(1).strip()
                         else:
-                            # Find first { or [ and take from there
-                            m = _re.search(r"[{\[]", inner)
-                            content = inner[m.start():] if m else inner
+                            # Reasoning models put the JSON at the END — use rfind
+                            last_brace = max(inner.rfind("{"), inner.rfind("["))
+                            if last_brace != -1:
+                                # Walk backwards to find where this JSON block starts
+                                # (find the matching opening bracket)
+                                for start in range(last_brace, -1, -1):
+                                    if inner[start] in "{[":
+                                        candidate = inner[start:]
+                                        try:
+                                            _json.loads(candidate)
+                                            content = candidate
+                                            break
+                                        except Exception:
+                                            continue
             except Exception:
                 pass
             logger.info("Pollinations succeeded.")
