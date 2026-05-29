@@ -127,6 +127,9 @@ Return JSON only:
     logger.info("[%s] Generating short %d topic...", channel_id, index)
     topic_raw = _llm(topic_prompt)
     topic = json.loads(repair_json(topic_raw))
+    # Pollinations sometimes wraps in a list — unwrap
+    if isinstance(topic, list):
+        topic = topic[0]
 
     script_prompt = f"""You are a YouTube Shorts scriptwriter for "{channel_name}" ({niche}).
 

@@ -68,9 +68,10 @@ _OPENAI_COMPAT_PROVIDERS = [
         "models": ["gemini-2.0-flash-lite", "gemini-2.0-flash"],
     },
     {
-        # GITHUB_TOKEN is automatically injected in GitHub Actions — no secret needed
+        # Requires GITHUB_TOKEN with `models: read` permission — set GH_MODELS_TOKEN secret
+        # to a PAT with that permission; the auto-injected GITHUB_TOKEN lacks it by default
         "name": "GitHub Models",
-        "env_key": "GITHUB_TOKEN",
+        "env_key": "GH_MODELS_TOKEN",
         "base_url": "https://models.inference.ai.azure.com",
         "models": ["meta-llama/Llama-3.3-70B-Instruct", "gpt-4o-mini"],
         "extra_headers": {"X-GitHub-Api-Version": "2022-11-28"},

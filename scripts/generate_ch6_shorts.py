@@ -136,9 +136,27 @@ No markdown. No explanation. Just the JSON array."""
     logger.info("Generating 2 short-form topics for CH6...")
     raw = _call_llm(prompt, system=system)
     topics = _parse_json(raw)
-    if not isinstance(topics, list) or len(topics) < 2:
-        raise ValueError(f"Expected list of 2 topics, got: {type(topics)}")
-    logger.info("Topics generated: %s | %s", topics[0]["title"], topics[1]["title"])
+
+    # If LLM returned a single dict instead of a list, wrap it
+    if isinstance(topics, dict):
+        topics = [topics]
+
+    # If we got fewer than 2, generate a second one with a fresh call
+    if len(topics) < 2:
+        logger.warning("Only got %d topic(s) — requesting second topic separately", len(topics))
+        extra_raw = _call_llm(prompt, system=system)
+        extra = _parse_json(extra_raw)
+        if isinstance(extra, dict):
+            topics.append(extra)
+        elif isinstance(extra, list):
+            topics.extend(extra)
+
+    if not topics:
+        raise ValueError("Failed to generate any topics")
+
+    logger.info("Topics generated: %s | %s",
+                topics[0].get("title", "?"),
+                topics[1].get("title", "?") if len(topics) > 1 else "single")
     return topics[:2]
 
 
