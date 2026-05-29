@@ -46,7 +46,7 @@ _OPENAI_COMPAT_PROVIDERS = [
         "name": "Cerebras",
         "env_key": "CEREBRAS_API_KEY",
         "base_url": "https://api.cerebras.ai/v1",
-        "models": ["llama-3.3-70b", "llama3.3-70b", "llama3.1-70b"],
+        "models": ["llama-3.3-70b", "llama3.1-70b", "llama3.1-8b"],
     },
     {
         "name": "Groq",

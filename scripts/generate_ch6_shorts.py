@@ -137,9 +137,17 @@ No markdown. No explanation. Just the JSON array."""
     raw = _call_llm(prompt, system=system)
     topics = _parse_json(raw)
 
-    # If LLM returned a single dict instead of a list, wrap it
+    # Unwrap {"topics": [...]} or {"data": [...]} envelope
     if isinstance(topics, dict):
+        topics = (topics.get("topics") or topics.get("data")
+                  or topics.get("items") or [topics])
+
+    # Ensure it's a list
+    if not isinstance(topics, list):
         topics = [topics]
+
+    # Filter out items that don't look like topics (no title/hook/fact)
+    topics = [t for t in topics if isinstance(t, dict) and t.get("title")]
 
     # If we got fewer than 2, generate a second one with a fresh call
     if len(topics) < 2:
@@ -147,9 +155,9 @@ No markdown. No explanation. Just the JSON array."""
         extra_raw = _call_llm(prompt, system=system)
         extra = _parse_json(extra_raw)
         if isinstance(extra, dict):
-            topics.append(extra)
-        elif isinstance(extra, list):
-            topics.extend(extra)
+            extra = (extra.get("topics") or extra.get("data") or [extra])
+        if isinstance(extra, list):
+            topics.extend([t for t in extra if isinstance(t, dict) and t.get("title")])
 
     if not topics:
         raise ValueError("Failed to generate any topics")
