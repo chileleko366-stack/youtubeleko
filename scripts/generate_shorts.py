@@ -77,7 +77,7 @@ def _llm(prompt: str, retries: int = 3) -> str:
     client = get_client()
     for attempt in range(retries):
         try:
-            return client.complete(prompt, max_tokens=2000)
+            return client.generate(prompt, max_tokens=2000)
         except Exception as exc:
             if attempt == retries - 1:
                 raise

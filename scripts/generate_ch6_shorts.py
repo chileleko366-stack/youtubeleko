@@ -72,26 +72,14 @@ def _load_config() -> Dict[str, Any]:
 
 def _call_llm(prompt: str, system: str = "") -> str:
     """Call LLM with retries using the ai_client fallback chain."""
-    client = get_client()
-    messages = []
-    if system:
-        messages.append({"role": "system", "content": system})
-    messages.append({"role": "user", "content": prompt})
-
     for attempt in range(1, MAX_RETRIES + 1):
         try:
-            response = client.chat.completions.create(
-                model=client._model,  # set by get_client
-                messages=messages,
-                temperature=0.85,
-                max_tokens=4096,
-            )
-            return response.choices[0].message.content.strip()
+            client = get_client()
+            return client.generate(prompt, system_prompt=system, max_tokens=4096, temperature=0.85)
         except Exception as exc:
             logger.warning("LLM attempt %d/%d failed: %s", attempt, MAX_RETRIES, exc)
             if attempt < MAX_RETRIES:
                 time.sleep(RETRY_DELAY * attempt)
-                client = get_client()  # refresh / try next provider
             else:
                 raise
 
