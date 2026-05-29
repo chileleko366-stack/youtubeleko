@@ -2,12 +2,16 @@ name: CH6 — Red Space Facts Pipeline
 
 on:
   schedule:
-    # Run daily at 09:00 UTC — Shorts every day, Longform auto-detected on Fridays
+    # Run daily at 09:00 UTC — Shorts every day, Longform auto-detected on Tuesdays and Fridays
     - cron: "0 9 * * *"
   workflow_dispatch:
     inputs:
+      force_shorts:
+        description: "Force shorts generation (true/false)"
+        required: false
+        default: "false"
       force_longform:
-        description: "Force longform generation even if not Friday (true/false)"
+        description: "Force longform generation even if not Tuesday/Friday (true/false)"
         required: false
         default: "false"
 
@@ -15,7 +19,7 @@ env:
   PYTHONPATH: ${{ github.workspace }}
 
 # ──────────────────────────────────────────────────────────────────────────────
-# DAY CHECK — determines whether to run the Friday longform job
+# DAY CHECK — determines whether to run the Tuesday/Friday longform job
 # ──────────────────────────────────────────────────────────────────────────────
 jobs:
   check-day:
@@ -25,11 +29,11 @@ jobs:
       run_longform: ${{ steps.check.outputs.run_longform }}
     steps:
       - id: check
-        name: Is it Friday?
+        name: Is it Tuesday or Friday?
         run: |
           DAY=$(date +%u)
           FORCE="${{ github.event.inputs.force_longform }}"
-          if [ "$DAY" = "5" ] || [ "$FORCE" = "true" ]; then
+          if [ "$DAY" = "2" ] || [ "$DAY" = "5" ] || [ "$FORCE" = "true" ]; then
             echo "run_longform=true" >> $GITHUB_OUTPUT
             echo "Longform: YES (day=$DAY, force=$FORCE)"
           else
@@ -38,10 +42,10 @@ jobs:
           fi
 
 # ──────────────────────────────────────────────────────────────────────────────
-# SHORTS — runs every day
+# SHORTS 1 — runs every day
 # ──────────────────────────────────────────────────────────────────────────────
-  produce-shorts:
-    name: CH6 — Daily Shorts
+  produce-short-1:
+    name: CH6 — Daily Short 1
     runs-on: ubuntu-latest
     timeout-minutes: 60
     continue-on-error: true
@@ -77,9 +81,9 @@ jobs:
         run: cd remotion && npm ci
         continue-on-error: true
 
-      - name: Research + generate Shorts manifest
+      - name: Research + generate Short 1 manifest
         id: gen_shorts
-        run: python scripts/generate_ch6_shorts.py
+        run: python scripts/generate_ch6_shorts.py --index 1
         env:
           GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
           CEREBRAS_API_KEY: ${{ secrets.CEREBRAS_API_KEY }}
@@ -94,40 +98,20 @@ jobs:
           CLOUDINARY_API_KEY: ${{ secrets.CLOUDINARY_API_KEY }}
           CLOUDINARY_API_SECRET: ${{ secrets.CLOUDINARY_API_SECRET }}
 
-      - name: Assemble Shorts video
-        run: python scripts/assemble_shorts.py temp/manifests/ch6_short.json
+      - name: Assemble Short 1 video
+        run: python scripts/assemble_shorts.py temp/manifests/ch6_short_1.json
         env:
-          GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
-          CEREBRAS_API_KEY: ${{ secrets.CEREBRAS_API_KEY }}
-          SAMBANOVA_API_KEY: ${{ secrets.SAMBANOVA_API_KEY }}
-          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
-          GITHUB_TOKEN: ${{ github.token }}
-          TOGETHER_API_KEY: ${{ secrets.TOGETHER_API_KEY }}
-          OPENROUTER_KEY: ${{ secrets.OPENROUTER_KEY }}
-          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          PEXELS_API_KEY: ${{ secrets.PEXELS_API_KEY }}
 
-      - name: Upload Shorts to Google Drive
-        run: |
-          python - <<'PYEOF'
-          import glob, os, sys
-          from pathlib import Path
-          from datetime import date
-          sys.path.insert(0, ".")
-          from scripts.upload_drive import backup_to_drive
-          date_str = date.today().isoformat()
-          # Find the assembled short
-          videos = sorted(glob.glob("temp/output/ch6_*.mp4"))
-          if not videos:
-              print("No assembled short video found — skipping Drive upload")
-              sys.exit(0)
-          video_path = videos[-1]
-          file_id = backup_to_drive(video_path, "ch6_shorts", date_str)
-          if file_id:
-              print(f"Uploaded to Drive: {Path(video_path).name} (id={file_id})")
-          else:
-              print(f"Drive upload failed for {video_path}")
-          PYEOF
+      - name: Upload Short 1 to YouTube
+        run: python scripts/upload_youtube.py temp/manifests/ch6_short_1.json
+        env:
+          YOUTUBE_CLIENT_ID: ${{ secrets.YOUTUBE_CLIENT_ID }}
+          YOUTUBE_CLIENT_SECRET: ${{ secrets.YOUTUBE_CLIENT_SECRET }}
+          YOUTUBE_REFRESH_TOKEN_CH6: ${{ secrets.YOUTUBE_REFRESH_TOKEN_CH6 }}
+
+      - name: Back up Short 1 to Google Drive
+        run: python scripts/upload_drive.py temp/manifests/ch6_short_1.json
         env:
           GOOGLE_DRIVE_CREDENTIALS: ${{ secrets.GOOGLE_DRIVE_CREDENTIALS }}
         continue-on-error: true
@@ -141,7 +125,7 @@ jobs:
           from pathlib import Path
           title = "unknown"
           try:
-              data = json.loads(Path("temp/manifests/ch6_short.json").read_text())
+              data = json.loads(Path("temp/manifests/ch6_short_1.json").read_text())
               title = data.get("topic", {}).get("title", "") or "unknown"
           except Exception:
               pass
@@ -152,10 +136,104 @@ jobs:
           PYEOF
 
 # ──────────────────────────────────────────────────────────────────────────────
-# LONGFORM — runs on Fridays only (or when force_longform=true)
+# SHORTS 2 — runs every day (parallel with Short 1)
+# ──────────────────────────────────────────────────────────────────────────────
+  produce-short-2:
+    name: CH6 — Daily Short 2
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    continue-on-error: true
+    permissions:
+      contents: read
+    outputs:
+      title: ${{ steps.export_result.outputs.title }}
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Set up Node.js 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: remotion/package-lock.json
+
+      - name: Install FFmpeg
+        run: sudo apt-get update -qq && sudo apt-get install -y ffmpeg
+
+      - name: Install Python dependencies
+        run: pip install -r requirements.txt
+
+      - name: Install Remotion dependencies
+        run: cd remotion && npm ci
+        continue-on-error: true
+
+      - name: Research + generate Short 2 manifest
+        id: gen_shorts
+        run: python scripts/generate_ch6_shorts.py --index 2
+        env:
+          GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
+          CEREBRAS_API_KEY: ${{ secrets.CEREBRAS_API_KEY }}
+          SAMBANOVA_API_KEY: ${{ secrets.SAMBANOVA_API_KEY }}
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          GITHUB_TOKEN: ${{ github.token }}
+          TOGETHER_API_KEY: ${{ secrets.TOGETHER_API_KEY }}
+          OPENROUTER_KEY: ${{ secrets.OPENROUTER_KEY }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          CLOUDINARY_CLOUD_NAME: ${{ secrets.CLOUDINARY_CLOUD_NAME }}
+          CLOUDINARY_API_KEY: ${{ secrets.CLOUDINARY_API_KEY }}
+          CLOUDINARY_API_SECRET: ${{ secrets.CLOUDINARY_API_SECRET }}
+
+      - name: Assemble Short 2 video
+        run: python scripts/assemble_shorts.py temp/manifests/ch6_short_2.json
+        env:
+          PEXELS_API_KEY: ${{ secrets.PEXELS_API_KEY }}
+
+      - name: Upload Short 2 to YouTube
+        run: python scripts/upload_youtube.py temp/manifests/ch6_short_2.json
+        env:
+          YOUTUBE_CLIENT_ID: ${{ secrets.YOUTUBE_CLIENT_ID }}
+          YOUTUBE_CLIENT_SECRET: ${{ secrets.YOUTUBE_CLIENT_SECRET }}
+          YOUTUBE_REFRESH_TOKEN_CH6: ${{ secrets.YOUTUBE_REFRESH_TOKEN_CH6 }}
+
+      - name: Back up Short 2 to Google Drive
+        run: python scripts/upload_drive.py temp/manifests/ch6_short_2.json
+        env:
+          GOOGLE_DRIVE_CREDENTIALS: ${{ secrets.GOOGLE_DRIVE_CREDENTIALS }}
+        continue-on-error: true
+
+      - name: Export result
+        id: export_result
+        if: always()
+        run: |
+          python - <<'PYEOF'
+          import json, os
+          from pathlib import Path
+          title = "unknown"
+          try:
+              data = json.loads(Path("temp/manifests/ch6_short_2.json").read_text())
+              title = data.get("topic", {}).get("title", "") or "unknown"
+          except Exception:
+              pass
+          out = os.environ.get("GITHUB_OUTPUT", "")
+          if out:
+              with open(out, "a") as f:
+                  f.write(f"title={title}\n")
+          PYEOF
+
+# ──────────────────────────────────────────────────────────────────────────────
+# LONGFORM — runs on Tuesdays and Fridays (or when force_longform=true)
 # ──────────────────────────────────────────────────────────────────────────────
   produce-longform:
-    name: CH6 — Friday Longform
+    name: CH6 — Tuesday/Friday Longform
     needs: check-day
     if: needs.check-day.outputs.run_longform == 'true'
     runs-on: ubuntu-latest
@@ -226,7 +304,14 @@ jobs:
       - name: Assemble longform video
         run: python scripts/assemble_video.py temp/manifests/ch6.json
 
-      - name: Upload longform to Google Drive
+      - name: Upload longform to YouTube
+        run: python scripts/upload_youtube.py temp/manifests/ch6.json
+        env:
+          YOUTUBE_CLIENT_ID: ${{ secrets.YOUTUBE_CLIENT_ID }}
+          YOUTUBE_CLIENT_SECRET: ${{ secrets.YOUTUBE_CLIENT_SECRET }}
+          YOUTUBE_REFRESH_TOKEN_CH6: ${{ secrets.YOUTUBE_REFRESH_TOKEN_CH6 }}
+
+      - name: Back up longform to Google Drive
         run: python scripts/upload_drive.py temp/manifests/ch6.json
         env:
           GOOGLE_DRIVE_CREDENTIALS: ${{ secrets.GOOGLE_DRIVE_CREDENTIALS }}
@@ -258,7 +343,7 @@ jobs:
 # ──────────────────────────────────────────────────────────────────────────────
   notify:
     name: Send Summary Email
-    needs: [produce-shorts, produce-longform]
+    needs: [produce-short-1, produce-short-2, produce-longform]
     if: always()
     runs-on: ubuntu-latest
 
@@ -277,8 +362,10 @@ jobs:
 
       - name: Send summary email
         run: |
-          SHORTS_STATUS="${{ needs.produce-shorts.result }}"
-          SHORTS_TITLE="${{ needs.produce-shorts.outputs.title }}"
+          SHORT1_STATUS="${{ needs.produce-short-1.result }}"
+          SHORT1_TITLE="${{ needs.produce-short-1.outputs.title }}"
+          SHORT2_STATUS="${{ needs.produce-short-2.result }}"
+          SHORT2_TITLE="${{ needs.produce-short-2.outputs.title }}"
           LONGFORM_STATUS="${{ needs.produce-longform.result }}"
           LONGFORM_TITLE="${{ needs.produce-longform.outputs.title }}"
           python - <<PYEOF
@@ -288,16 +375,20 @@ jobs:
           from scripts.telegram_notify import send_message
 
           date_str = date.today().isoformat()
-          shorts_status = "${SHORTS_STATUS}"
-          shorts_title = "${SHORTS_TITLE}" or "unknown"
+          short1_status = "${SHORT1_STATUS}"
+          short1_title = "${SHORT1_TITLE}" or "unknown"
+          short2_status = "${SHORT2_STATUS}"
+          short2_title = "${SHORT2_TITLE}" or "unknown"
           longform_status = "${LONGFORM_STATUS}"
           longform_title = "${LONGFORM_TITLE}" or "not run"
 
-          shorts_ok = shorts_status == "success"
+          short1_ok = short1_status == "success"
+          short2_ok = short2_status == "success"
           longform_ran = longform_status not in ("skipped", "")
           longform_ok = longform_status == "success"
 
-          shorts_icon = "✅" if shorts_ok else "❌"
+          short1_icon = "✅" if short1_ok else "❌"
+          short2_icon = "✅" if short2_ok else "❌"
           longform_icon = "✅" if longform_ok else ("⏭️" if not longform_ran else "❌")
 
           subject = f"[YoutuBeLeko] CH6 Red Space Facts — {date_str}"
@@ -306,23 +397,32 @@ jobs:
           lines = [
               f"CH6 Red Space Facts — {date_str}",
               "",
-              f"SHORTS ({shorts_icon}):   {shorts_title}",
-              f"  Status: {shorts_status} — uploaded to Google Drive",
+              f"SHORT 1 ({short1_icon}):  {short1_title}",
+              f"  Status: {short1_status} — uploaded to YouTube + Google Drive",
+              f"SHORT 2 ({short2_icon}):  {short2_title}",
+              f"  Status: {short2_status} — uploaded to YouTube + Google Drive",
           ]
           if longform_ran:
               lines.append(f"LONGFORM ({longform_icon}): {longform_title}")
-              lines.append(f"  Status: {longform_status} — uploaded to Google Drive")
+              lines.append(f"  Status: {longform_status} — uploaded to YouTube + Google Drive")
           else:
-              lines.append("LONGFORM: Not scheduled today (runs Fridays)")
+              lines.append("LONGFORM: Not scheduled today (runs Tuesdays and Fridays)")
 
           body_text = "\n".join(lines)
 
           # HTML
-          shorts_row = (
+          short1_row = (
               f"<tr>"
-              f"<td style='padding:8px;border-bottom:1px solid #eee'><b>Shorts</b></td>"
-              f"<td style='padding:8px;border-bottom:1px solid #eee'>{shorts_icon} <b>{shorts_title}</b></td>"
-              f"<td style='padding:8px;border-bottom:1px solid #eee'>{shorts_status}</td>"
+              f"<td style='padding:8px;border-bottom:1px solid #eee'><b>Short 1</b></td>"
+              f"<td style='padding:8px;border-bottom:1px solid #eee'>{short1_icon} <b>{short1_title}</b></td>"
+              f"<td style='padding:8px;border-bottom:1px solid #eee'>{short1_status}</td>"
+              f"</tr>"
+          )
+          short2_row = (
+              f"<tr>"
+              f"<td style='padding:8px;border-bottom:1px solid #eee'><b>Short 2</b></td>"
+              f"<td style='padding:8px;border-bottom:1px solid #eee'>{short2_icon} <b>{short2_title}</b></td>"
+              f"<td style='padding:8px;border-bottom:1px solid #eee'>{short2_status}</td>"
               f"</tr>"
           )
           if longform_ran:
@@ -337,25 +437,26 @@ jobs:
               longform_row = (
                   f"<tr>"
                   f"<td style='padding:8px' colspan='3' style='color:#888'>"
-                  f"Longform not scheduled today — runs every Friday</td>"
+                  f"Longform not scheduled today — runs every Tuesday and Friday</td>"
                   f"</tr>"
               )
 
           body_html = f"""
           <div style="font-family:sans-serif;max-width:640px;margin:0 auto">
             <h2 style="color:#ff4444">🔴 Red Space Facts — {date_str}</h2>
-            <p>Both videos uploaded to Google Drive (not YouTube — review before publishing).</p>
+            <p>Videos uploaded to YouTube and backed up to Google Drive.</p>
             <table width="100%" cellpadding="0" cellspacing="0" style="border-collapse:collapse">
               <tr style="background:#f5f5f5">
                 <th style="padding:8px;text-align:left">Type</th>
                 <th style="padding:8px;text-align:left">Title</th>
                 <th style="padding:8px;text-align:left">Status</th>
               </tr>
-              {shorts_row}
+              {short1_row}
+              {short2_row}
               {longform_row}
             </table>
             <p style="color:#888;font-size:12px;margin-top:24px">
-              Videos are in Google Drive → YouTube Automation Backups → CH6_SHORTS and CH6
+              Backups in Google Drive → YouTube Automation Backups → CH6_SHORTS and CH6
             </p>
           </div>
           """
@@ -364,10 +465,11 @@ jobs:
 
           # Brief Telegram ping
           tg_parts = [f"🔴 *CH6 Red Space Facts* — {date_str}"]
-          tg_parts.append(f"{shorts_icon} Shorts: _{shorts_title}_")
+          tg_parts.append(f"{short1_icon} Short 1: _{short1_title}_")
+          tg_parts.append(f"{short2_icon} Short 2: _{short2_title}_")
           if longform_ran:
               tg_parts.append(f"{longform_icon} Longform: _{longform_title}_")
-          tg_parts.append("Videos sent to Google Drive.")
+          tg_parts.append("Videos uploaded to YouTube + Google Drive.")
           try:
               send_message("\n".join(tg_parts))
           except Exception:
