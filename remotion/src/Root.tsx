@@ -1,4 +1,4 @@
-import { Composition } from "remotion";
+import { Composition, registerRoot } from "remotion";
 import { TextReveal } from "./compositions/TextReveal";
 import { SplitScreen } from "./compositions/SplitScreen";
 import { Fullscreen } from "./compositions/Fullscreen";
@@ -128,3 +128,5 @@ export const RemotionRoot: React.FC = () => {
     </>
   );
 };
+
+registerRoot(RemotionRoot);

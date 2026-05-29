@@ -127,28 +127,36 @@ Return JSON only:
     logger.info("[%s] Generating short %d topic...", channel_id, index)
     topic_raw = _llm(topic_prompt)
     topic = json.loads(repair_json(topic_raw))
+    # Pollinations sometimes wraps in a list — unwrap
+    if isinstance(topic, list):
+        topic = topic[0]
 
     script_prompt = f"""You are a YouTube Shorts scriptwriter for "{channel_name}" ({niche}).
+Target audience: {audience}{forbidden_str}
 
 Topic: {topic['title']}
 Hook: {topic['hook']}
 Core fact: {topic['fact']}
 
-Write a 60-second short script with exactly 8 lines. Each line is ~7-8 seconds of narration.
-Line 1: hook (from above)
-Lines 2-7: build-up, context, detail
-Line 8: call to action ("Follow for more [niche] facts")
+Write a DENSE, INFORMATIVE 60-second short script with exactly 8 lines. Each line is ~7-8 seconds of narration.
+- Line 1 (line_number 1): Hook — grab attention immediately with a surprising statement or question
+- Lines 2-7 (line_number 2-7): Pack in SPECIFIC facts, stats, dates, names, and insights — no filler. Each line must contain a concrete, verifiable detail relevant to the niche and audience.
+- Line 8 (line_number 8): Call to action — "Follow for more {niche} facts"
+
+Every line MUST include a "line_number" field (1 through 8).
 
 Available motion-graphic compositions: {', '.join(COMPOSITIONS)}
+Choose the most visually appropriate composition for each line's content.
 
 Return JSON only:
 {{
   "lines": [
     {{
-      "text": "narration text",
+      "line_number": 1,
+      "text": "narration text with the actual fact, stat, or insight",
       "duration_seconds": 7,
       "composition": "CompositionName",
-      "b_roll_keywords": ["keyword1", "keyword2"]
+      "props": {{}}
     }}
   ],
   "metadata": {{
@@ -163,12 +171,36 @@ Return JSON only:
     script_raw = _llm(script_prompt)
     script_data = json.loads(repair_json(script_raw))
 
+    # Unwrap Pollinations {"role","content"} envelope if present
+    if isinstance(script_data, dict) and "role" in script_data and "content" in script_data:
+        inner = script_data.get("content", "")
+        if isinstance(inner, str):
+            script_data = json.loads(repair_json(inner))
+
+    # Retry once if no lines
+    raw_lines = script_data.get("lines", [])
+    if not raw_lines:
+        logger.warning("[%s] No lines in script response — retrying...", channel_id)
+        script_raw2 = _llm(script_prompt)
+        script_data2 = json.loads(repair_json(script_raw2))
+        if isinstance(script_data2, dict) and "role" in script_data2 and "content" in script_data2:
+            inner = script_data2.get("content", "")
+            script_data2 = json.loads(repair_json(inner)) if isinstance(inner, str) else script_data2
+        raw_lines = script_data2.get("lines", [])
+        if not raw_lines:
+            raise RuntimeError(f"[{channel_id}] LLM returned no lines after retry. Raw: {script_raw2[:300]}")
+    for i, line in enumerate(raw_lines, start=1):
+        if not line.get("line_number"):
+            line["line_number"] = i
+        # Remove any b_roll_keywords — stock footage is not used
+        line.pop("b_roll_keywords", None)
+
     return {
         "channel_id": channel_id,
         "channel_name": channel_name,
         "short_index": index,
         "topic": topic,
-        "lines": script_data.get("lines", []),
+        "lines": raw_lines,
         "metadata": script_data.get("metadata", {}),
         "tts_voice": tts_voice,
         "speech_rate": speech_rate,

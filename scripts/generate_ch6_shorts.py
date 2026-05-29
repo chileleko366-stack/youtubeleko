@@ -136,9 +136,35 @@ No markdown. No explanation. Just the JSON array."""
     logger.info("Generating 2 short-form topics for CH6...")
     raw = _call_llm(prompt, system=system)
     topics = _parse_json(raw)
-    if not isinstance(topics, list) or len(topics) < 2:
-        raise ValueError(f"Expected list of 2 topics, got: {type(topics)}")
-    logger.info("Topics generated: %s | %s", topics[0]["title"], topics[1]["title"])
+
+    # Unwrap {"topics": [...]} or {"data": [...]} envelope
+    if isinstance(topics, dict):
+        topics = (topics.get("topics") or topics.get("data")
+                  or topics.get("items") or [topics])
+
+    # Ensure it's a list
+    if not isinstance(topics, list):
+        topics = [topics]
+
+    # Filter out items that don't look like topics (no title/hook/fact)
+    topics = [t for t in topics if isinstance(t, dict) and t.get("title")]
+
+    # If we got fewer than 2, generate a second one with a fresh call
+    if len(topics) < 2:
+        logger.warning("Only got %d topic(s) — requesting second topic separately", len(topics))
+        extra_raw = _call_llm(prompt, system=system)
+        extra = _parse_json(extra_raw)
+        if isinstance(extra, dict):
+            extra = (extra.get("topics") or extra.get("data") or [extra])
+        if isinstance(extra, list):
+            topics.extend([t for t in extra if isinstance(t, dict) and t.get("title")])
+
+    if not topics:
+        raise ValueError("Failed to generate any topics")
+
+    logger.info("Topics generated: %s | %s",
+                topics[0].get("title", "?"),
+                topics[1].get("title", "?") if len(topics) > 1 else "single")
     return topics[:2]
 
 
@@ -195,7 +221,7 @@ Return ONLY a JSON object with this exact structure:
       "text": "narration text for this line",
       "duration_seconds": 7,
       "composition": "CompositionName",
-      "b_roll_keywords": ["keyword1", "keyword2", "keyword3"]
+      "props": {{}}
     }}
     // ... 8 lines total
   ],
@@ -213,14 +239,41 @@ No markdown. No explanation. Just the JSON object."""
     raw = _call_llm(prompt, system=system)
     manifest_core = _parse_json(raw)
 
-    # Validate line count
+    # Unwrap Pollinations envelope {"role":..., "content":...} if present
+    if isinstance(manifest_core, dict) and "role" in manifest_core and "content" in manifest_core:
+        inner = manifest_core["content"]
+        if isinstance(inner, str):
+            manifest_core = _parse_json(inner)
+        elif isinstance(inner, list):
+            # Content is a list of blocks — join text blocks
+            text = " ".join(c.get("text", "") if isinstance(c, dict) else str(c) for c in inner)
+            manifest_core = _parse_json(text)
+
+    # Validate lines — retry once if empty
     lines = manifest_core.get("lines", [])
+    if not lines:
+        logger.warning("No lines in LLM response for short %d — raw (first 500): %s", short_index, raw[:500])
+        logger.warning("Retrying script generation...")
+        raw2 = _call_llm(prompt, system=system)
+        manifest_core = _parse_json(raw2)
+        if isinstance(manifest_core, dict) and "role" in manifest_core and "content" in manifest_core:
+            inner = manifest_core.get("content", "")
+            manifest_core = _parse_json(inner) if isinstance(inner, str) else manifest_core
+        lines = manifest_core.get("lines", [])
+        if not lines:
+            raise ValueError(
+                f"LLM returned no lines for short {short_index} after retry. "
+                f"Raw response: {raw2[:500]}"
+            )
+
     if len(lines) != 8:
-        logger.warning(
-            "Expected 8 lines, got %d for short %d. Proceeding anyway.",
-            len(lines),
-            short_index,
-        )
+        logger.warning("Expected 8 lines, got %d for short %d.", len(lines), short_index)
+
+    # Inject line_number if LLM omitted it; strip b_roll_keywords
+    for i, line in enumerate(lines, start=1):
+        if not line.get("line_number"):
+            line["line_number"] = i
+        line.pop("b_roll_keywords", None)
 
     # Assemble full manifest
     manifest = {
@@ -275,16 +328,32 @@ def upload_to_cloudinary(manifest: Dict[str, Any], public_id: str) -> str:
 # ---------------------------------------------------------------------------
 
 def main() -> None:
+    import argparse  # pylint: disable=import-outside-toplevel
+    parser = argparse.ArgumentParser(description="CH6 Shorts Generator")
+    parser.add_argument("--index", type=int, default=None,
+                        help="Which short to generate (1 or 2). Omit to generate both.")
+    args = parser.parse_args()
+
     logger.info("=== CH6 Shorts Generator starting ===")
 
     cfg = _load_config()
     logger.info("Loaded config: %s", cfg["channel_name"])
 
-    # Generate 2 unique topics in one LLM call
+    # Generate topics — always fetch 2 so they are unique from each other
     topics = generate_topics(cfg)
 
+    # Decide which indices to produce
+    if args.index is not None:
+        indices = [args.index]
+        # Use the topic at position (index-1), wrap if out of range
+        selected_topics = {args.index: topics[(args.index - 1) % len(topics)]}
+    else:
+        indices = list(range(1, len(topics) + 1))
+        selected_topics = {i: topics[i - 1] for i in indices}
+
     results = []
-    for i, topic in enumerate(topics, start=1):
+    for i in indices:
+        topic = selected_topics[i]
         manifest = generate_short_manifest(topic, cfg, short_index=i)
         filename = f"ch6_short_{i}.json"
         local_path = save_manifest(manifest, filename)
@@ -292,7 +361,6 @@ def main() -> None:
         try:
             url = upload_to_cloudinary(manifest, f"ch6_short_{i}")
             manifest["cloudinary_url"] = url
-            # Re-save with URL included
             save_manifest(manifest, filename)
         except Exception as exc:
             logger.warning("Cloudinary upload failed for short %d: %s", i, exc)
