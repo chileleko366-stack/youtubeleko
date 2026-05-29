@@ -213,7 +213,7 @@ Return ONLY a JSON object with this exact structure:
       "text": "narration text for this line",
       "duration_seconds": 7,
       "composition": "CompositionName",
-      "props": {}
+      "props": {{}}
     }}
     // ... 8 lines total
   ],
