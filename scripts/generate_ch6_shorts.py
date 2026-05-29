@@ -298,16 +298,32 @@ def upload_to_cloudinary(manifest: Dict[str, Any], public_id: str) -> str:
 # ---------------------------------------------------------------------------
 
 def main() -> None:
+    import argparse  # pylint: disable=import-outside-toplevel
+    parser = argparse.ArgumentParser(description="CH6 Shorts Generator")
+    parser.add_argument("--index", type=int, default=None,
+                        help="Which short to generate (1 or 2). Omit to generate both.")
+    args = parser.parse_args()
+
     logger.info("=== CH6 Shorts Generator starting ===")
 
     cfg = _load_config()
     logger.info("Loaded config: %s", cfg["channel_name"])
 
-    # Generate 2 unique topics in one LLM call
+    # Generate topics — always fetch 2 so they are unique from each other
     topics = generate_topics(cfg)
 
+    # Decide which indices to produce
+    if args.index is not None:
+        indices = [args.index]
+        # Use the topic at position (index-1), wrap if out of range
+        selected_topics = {args.index: topics[(args.index - 1) % len(topics)]}
+    else:
+        indices = list(range(1, len(topics) + 1))
+        selected_topics = {i: topics[i - 1] for i in indices}
+
     results = []
-    for i, topic in enumerate(topics, start=1):
+    for i in indices:
+        topic = selected_topics[i]
         manifest = generate_short_manifest(topic, cfg, short_index=i)
         filename = f"ch6_short_{i}.json"
         local_path = save_manifest(manifest, filename)
@@ -315,7 +331,6 @@ def main() -> None:
         try:
             url = upload_to_cloudinary(manifest, f"ch6_short_{i}")
             manifest["cloudinary_url"] = url
-            # Re-save with URL included
             save_manifest(manifest, filename)
         except Exception as exc:
             logger.warning("Cloudinary upload failed for short %d: %s", i, exc)
