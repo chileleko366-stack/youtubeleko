@@ -171,8 +171,24 @@ Return JSON only:
     script_raw = _llm(script_prompt)
     script_data = json.loads(repair_json(script_raw))
 
-    # Inject line_number (1-indexed) into every line if the LLM omitted it
+    # Unwrap Pollinations {"role","content"} envelope if present
+    if isinstance(script_data, dict) and "role" in script_data and "content" in script_data:
+        inner = script_data.get("content", "")
+        if isinstance(inner, str):
+            script_data = json.loads(repair_json(inner))
+
+    # Retry once if no lines
     raw_lines = script_data.get("lines", [])
+    if not raw_lines:
+        logger.warning("[%s] No lines in script response — retrying...", channel_id)
+        script_raw2 = _llm(script_prompt)
+        script_data2 = json.loads(repair_json(script_raw2))
+        if isinstance(script_data2, dict) and "role" in script_data2 and "content" in script_data2:
+            inner = script_data2.get("content", "")
+            script_data2 = json.loads(repair_json(inner)) if isinstance(inner, str) else script_data2
+        raw_lines = script_data2.get("lines", [])
+        if not raw_lines:
+            raise RuntimeError(f"[{channel_id}] LLM returned no lines after retry. Raw: {script_raw2[:300]}")
     for i, line in enumerate(raw_lines, start=1):
         if not line.get("line_number"):
             line["line_number"] = i

@@ -231,14 +231,36 @@ No markdown. No explanation. Just the JSON object."""
     raw = _call_llm(prompt, system=system)
     manifest_core = _parse_json(raw)
 
-    # Validate and clean lines
+    # Unwrap Pollinations envelope {"role":..., "content":...} if present
+    if isinstance(manifest_core, dict) and "role" in manifest_core and "content" in manifest_core:
+        inner = manifest_core["content"]
+        if isinstance(inner, str):
+            manifest_core = _parse_json(inner)
+        elif isinstance(inner, list):
+            # Content is a list of blocks — join text blocks
+            text = " ".join(c.get("text", "") if isinstance(c, dict) else str(c) for c in inner)
+            manifest_core = _parse_json(text)
+
+    # Validate lines — retry once if empty
     lines = manifest_core.get("lines", [])
+    if not lines:
+        logger.warning("No lines in LLM response for short %d — raw (first 500): %s", short_index, raw[:500])
+        logger.warning("Retrying script generation...")
+        raw2 = _call_llm(prompt, system=system)
+        manifest_core = _parse_json(raw2)
+        if isinstance(manifest_core, dict) and "role" in manifest_core and "content" in manifest_core:
+            inner = manifest_core.get("content", "")
+            manifest_core = _parse_json(inner) if isinstance(inner, str) else manifest_core
+        lines = manifest_core.get("lines", [])
+        if not lines:
+            raise ValueError(
+                f"LLM returned no lines for short {short_index} after retry. "
+                f"Raw response: {raw2[:500]}"
+            )
+
     if len(lines) != 8:
-        logger.warning(
-            "Expected 8 lines, got %d for short %d. Proceeding anyway.",
-            len(lines),
-            short_index,
-        )
+        logger.warning("Expected 8 lines, got %d for short %d.", len(lines), short_index)
+
     # Inject line_number if LLM omitted it; strip b_roll_keywords
     for i, line in enumerate(lines, start=1):
         if not line.get("line_number"):
