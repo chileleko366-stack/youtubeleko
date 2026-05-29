@@ -78,7 +78,7 @@ export const SpaceTitle: React.FC<CompositionProps> = ({
     { extrapolateLeft: "clamp", extrapolateRight: "clamp" }
   );
 
-  // Nebula blob opacities slowly breathe
+  // Nebula blob opacities slowly breathe — deterministic using frame
   const nebulaBreath = 0.5 + 0.25 * Math.sin((frame * Math.PI) / 90);
 
   return (
@@ -91,8 +91,6 @@ export const SpaceTitle: React.FC<CompositionProps> = ({
         justifyContent: "center",
       }}
     >
-      {/* Layer 1: Deep space base — done via backgroundColor */}
-
       {/* Layer 2: Nebula radial gradients — deep purple/blue/red */}
       <div
         style={{

@@ -5,17 +5,11 @@ import {
   spring,
   useCurrentFrame,
   useVideoConfig,
+  random,
 } from "remotion";
 import type { CompositionProps } from "../Root";
-
-const PARTICLES = Array.from({ length: 80 }, (_, i) => ({
-  id: i,
-  x: Math.random() * 100,
-  y: Math.random() * 100,
-  size: Math.random() * 2 + 0.3,
-  opacity: Math.random() * 0.5 + 0.1,
-  twinkle: Math.random() * 70,
-}));
+import { ParticleField } from "../lib/particles";
+import { easeOutBack } from "../lib/easing";
 
 export const SpaceQuote: React.FC<CompositionProps> = ({
   quoteText,
@@ -31,91 +25,78 @@ export const SpaceQuote: React.FC<CompositionProps> = ({
   const quote = quoteText ?? text;
   const words = quote.split(" ");
 
-  // Big quotation mark
-  const quoteMarkSpring = spring({
+  // Big quotation mark — scales in from 2x with easeOutBack bounce
+  const quoteMarkRaw = spring({
     frame,
     fps,
-    config: { damping: 14, stiffness: 70 },
+    config: { damping: 12, stiffness: 80 },
   });
-  const quoteMarkOpacity = interpolate(quoteMarkSpring, [0, 1], [0, 1]);
-  const quoteMarkScale = interpolate(quoteMarkSpring, [0, 1], [1.6, 1]);
+  const quoteMarkScale = easeOutBack(Math.min(quoteMarkRaw, 1));
+  const quoteMarkOpacity = interpolate(quoteMarkRaw, [0, 0.3], [0, 1], {
+    extrapolateRight: "clamp",
+  });
 
-  // Attribution
+  // Each word: staggered spring 8 frames apart + blur→sharp
+  const wordAnims = words.map((_, i) => {
+    const wordDelay = 10 + i * 3;
+    const wSpring = spring({
+      frame: Math.max(0, frame - wordDelay),
+      fps,
+      config: { damping: 16, stiffness: 120 },
+    });
+    return {
+      opacity: interpolate(wSpring, [0, 1], [0, 1]),
+      y: interpolate(wSpring, [0, 1], [12, 0]),
+      blur: interpolate(wSpring, [0, 1], [5, 0]),
+    };
+  });
+
+  // Shimmering underline draws left to right
+  const allWordsDelay = 10 + words.length * 3;
+  const underlineSpring = spring({
+    frame: Math.max(0, frame - allWordsDelay),
+    fps,
+    config: { damping: 20, stiffness: 80 },
+  });
+  const underlineWidth = interpolate(underlineSpring, [0, 1], [0, 100]);
+
+  // Attribution slides up from bottom with spring + fade
+  const attrDelay = allWordsDelay + 8;
   const attrSpring = spring({
-    frame: Math.max(0, frame - Math.min(30 + words.length * 2, 55)),
+    frame: Math.max(0, frame - attrDelay),
     fps,
     config: { damping: 20, stiffness: 90 },
   });
   const attrOpacity = interpolate(attrSpring, [0, 1], [0, 1]);
-  const attrY = interpolate(attrSpring, [0, 1], [20, 0]);
+  const attrY = interpolate(attrSpring, [0, 1], [30, 0]);
+
+  // Nebula blobs drift — deterministic
+  const nebulaA = 0.35 + 0.15 * Math.sin((frame * Math.PI) / 80);
+  const nebulaB = 0.3 + 0.15 * Math.cos((frame * Math.PI) / 100 + 1);
 
   return (
     <AbsoluteFill
       style={{
-        backgroundColor,
+        backgroundColor: "#000008",
         overflow: "hidden",
         display: "flex",
         alignItems: "center",
         justifyContent: "center",
       }}
     >
-      {/* Star particles */}
-      {PARTICLES.map((p) => {
-        const tw =
-          0.3 +
-          0.7 * Math.abs(Math.sin(((frame + p.twinkle) * Math.PI) / 60));
-        return (
-          <div
-            key={p.id}
-            style={{
-              position: "absolute",
-              left: `${p.x}%`,
-              top: `${p.y}%`,
-              width: p.size,
-              height: p.size,
-              borderRadius: "50%",
-              backgroundColor: "#ffffff",
-              opacity: p.opacity * tw,
-              transform: "translate(-50%,-50%)",
-            }}
-          />
-        );
-      })}
-
-      {/* Deep space background */}
+      {/* Full-screen radial gradient: black center → deep purple/blue edges */}
       <div
         style={{
           position: "absolute",
           inset: 0,
-          background:
-            "radial-gradient(ellipse 100% 80% at 50% 50%, rgba(20,0,50,0.7) 0%, rgba(0,0,20,0.4) 60%, transparent 100%)",
+          background: `
+            radial-gradient(ellipse 100% 80% at 50% 50%, rgba(0,0,0,0) 30%, rgba(30,0,70,${nebulaA}) 70%, rgba(0,10,60,${nebulaB}) 100%)
+          `,
         }}
       />
 
-      {/* Horizontal accent lines */}
-      {[0.28, 0.72].map((y, i) => {
-        const lineSpring = spring({
-          frame: Math.max(0, frame - i * 8),
-          fps,
-          config: { damping: 20, stiffness: 60 },
-        });
-        const lw = interpolate(lineSpring, [0, 1], [0, 100]);
-        return (
-          <div
-            key={i}
-            style={{
-              position: "absolute",
-              top: `${y * 100}%`,
-              left: 0,
-              height: 1,
-              width: `${lw}%`,
-              background: `linear-gradient(${
-                i === 0 ? "90deg" : "270deg"
-              }, transparent, rgba(255,68,68,0.25), transparent)`,
-            }}
-          />
-        );
-      })}
+      {/* ParticleField — 40 particles, warm white, very slow */}
+      <ParticleField count={40} speedMultiplier={0.15} sizeRange={[0.4, 1.6]} />
 
       {/* Vignette */}
       <div
@@ -137,25 +118,26 @@ export const SpaceQuote: React.FC<CompositionProps> = ({
           textAlign: "center",
         }}
       >
-        {/* Large quotation mark */}
+        {/* Large quotation mark — top-left, easeOutBack bounce, deep red */}
         <div
           style={{
             fontFamily: fontPrimary,
-            fontSize: 260,
+            fontSize: 280,
             color: brandColor,
-            lineHeight: 0.6,
-            marginBottom: 20,
+            lineHeight: 0.55,
+            marginBottom: 16,
             opacity: quoteMarkOpacity,
             transform: `scale(${quoteMarkScale})`,
-            transformOrigin: "center bottom",
-            textShadow: `0 0 60px rgba(255,68,68,0.4), 0 0 120px rgba(255,68,68,0.15)`,
+            transformOrigin: "left bottom",
+            textAlign: "left",
+            textShadow: `0 0 60px rgba(255,68,68,0.5), 0 0 120px rgba(255,68,68,0.2)`,
             userSelect: "none",
           }}
         >
           "
         </div>
 
-        {/* Quote text — word by word reveal */}
+        {/* Quote text — word by word reveal with blur→sharp */}
         <p
           style={{
             fontFamily: fontSecondary,
@@ -163,54 +145,51 @@ export const SpaceQuote: React.FC<CompositionProps> = ({
             fontWeight: 300,
             color: "#ffffff",
             lineHeight: 1.55,
-            margin: "0 0 48px",
+            margin: "0 0 32px",
             letterSpacing: "0.5px",
             textShadow: "0 2px 20px rgba(0,0,0,0.8)",
           }}
         >
-          {words.map((word, i) => {
-            const wordDelay = 8 + i * 2.2;
-            const wOpacity = interpolate(
-              frame,
-              [wordDelay, wordDelay + 6],
-              [0, 1],
-              { extrapolateLeft: "clamp", extrapolateRight: "clamp" }
-            );
-            const wY = interpolate(
-              frame,
-              [wordDelay, wordDelay + 6],
-              [12, 0],
-              { extrapolateLeft: "clamp", extrapolateRight: "clamp" }
-            );
-            return (
-              <span
-                key={i}
-                style={{
-                  opacity: wOpacity,
-                  display: "inline-block",
-                  transform: `translateY(${wY}px)`,
-                  marginRight: "0.28em",
-                }}
-              >
-                {word}
-              </span>
-            );
-          })}
+          {words.map((word, i) => (
+            <span
+              key={i}
+              style={{
+                opacity: wordAnims[i].opacity,
+                display: "inline-block",
+                transform: `translateY(${wordAnims[i].y}px)`,
+                filter: `blur(${wordAnims[i].blur}px)`,
+                marginRight: "0.28em",
+              }}
+            >
+              {word}
+            </span>
+          ))}
         </p>
 
-        {/* Divider */}
+        {/* Shimmering underline draws left-to-right */}
         <div
           style={{
-            width: 100,
+            position: "relative",
             height: 2,
-            background: `linear-gradient(90deg, transparent, ${brandColor}, transparent)`,
-            margin: "0 auto 28px",
-            opacity: attrOpacity,
-            boxShadow: `0 0 12px ${brandColor}`,
+            marginBottom: 28,
+            overflow: "hidden",
           }}
-        />
+        >
+          <div
+            style={{
+              position: "absolute",
+              top: 0,
+              left: 0,
+              height: "100%",
+              width: `${underlineWidth}%`,
+              background: `linear-gradient(90deg, ${brandColor}, rgba(255,160,160,0.6), ${brandColor})`,
+              boxShadow: `0 0 12px ${brandColor}`,
+              borderRadius: 1,
+            }}
+          />
+        </div>
 
-        {/* Attribution */}
+        {/* Attribution — slides up from bottom */}
         <div
           style={{
             fontFamily: fontSecondary,

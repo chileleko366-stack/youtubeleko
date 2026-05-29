@@ -72,7 +72,7 @@ export const StarField: React.FC<CompositionProps> = ({
       })
     : 0;
 
-  // Nebula blobs opacity oscillation
+  // Nebula blobs opacity oscillation — deterministic
   const nebulaA = 0.4 + 0.2 * Math.sin((frame * Math.PI) / 80);
   const nebulaB = 0.35 + 0.2 * Math.cos((frame * Math.PI) / 100);
   const nebulaC = 0.3 + 0.15 * Math.sin((frame * Math.PI) / 120 + 1);

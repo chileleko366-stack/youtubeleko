@@ -67,7 +67,7 @@ export const SpaceStat: React.FC<CompositionProps> = ({
     extrapolateRight: "clamp",
   }) * (0.3 + 0.4 * glowPulse);
 
-  // Background gradient breath
+  // Background gradient breath — deterministic
   const bgBreath = 0.4 + 0.2 * Math.sin((frame * Math.PI) / 70);
 
   return (
