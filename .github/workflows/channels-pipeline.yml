@@ -1,0 +1,1183 @@
+name: All Channels Pipeline (CH1–CH5)
+
+# ──────────────────────────────────────────────────────────────────────────────
+# SCHEDULE
+#   20:00 UTC — nightly stage: generate topics + scripts for next day (CH1-CH5)
+#   04:00 UTC — morning stage: produce & upload longform (Tue/Fri) + 2 shorts/day
+#
+# MANUAL DISPATCH
+#   stage: nightly | morning | all  (default: all)
+#   force_longform: true | false    (override Tue/Fri gate)
+# ──────────────────────────────────────────────────────────────────────────────
+on:
+  schedule:
+    - cron: "0 20 * * *"   # nightly — topic & script generation
+    - cron: "0 4 * * *"    # morning — production & upload
+  workflow_dispatch:
+    inputs:
+      stage:
+        description: "Pipeline stage to run: nightly | morning | all"
+        required: false
+        default: "all"
+      channels:
+        description: "Comma-separated channel IDs (e.g. ch1,ch3) or 'all'"
+        required: false
+        default: "all"
+      force_longform:
+        description: "Force longform even if not Tuesday/Friday (true/false)"
+        required: false
+        default: "false"
+
+env:
+  PYTHONPATH: ${{ github.workspace }}
+
+# ── REUSABLE ENV BLOCK (referenced inline in each job) ────────────────────────
+# All AI provider keys are passed to every step that calls the LLM.
+# Keys marked CLOUDINARY_* are needed by generation steps only.
+# Keys marked YOUTUBE_* are per-channel.
+
+jobs:
+
+# ──────────────────────────────────────────────────────────────────────────────
+# GATE — determines which stages run this invocation
+# ──────────────────────────────────────────────────────────────────────────────
+  check-gate:
+    name: Determine Pipeline Stage
+    runs-on: ubuntu-latest
+    outputs:
+      run_nightly: ${{ steps.gate.outputs.run_nightly }}
+      run_morning: ${{ steps.gate.outputs.run_morning }}
+      run_longform: ${{ steps.gate.outputs.run_longform }}
+    steps:
+      - id: gate
+        name: Evaluate schedule / dispatch inputs
+        run: |
+          SCHEDULE="${{ github.event.schedule }}"
+          STAGE="${{ inputs.stage }}"
+          EVENT="${{ github.event_name }}"
+          FORCE="${{ inputs.force_longform }}"
+          DAY=$(date +%u)   # 1=Mon … 7=Sun
+
+          # ── nightly: topic+script generation ──────────────────────────────
+          if [ "$SCHEDULE" = "0 20 * * *" ] || \
+             { [ "$EVENT" = "workflow_dispatch" ] && \
+               { [ "$STAGE" = "nightly" ] || [ "$STAGE" = "all" ]; }; }; then
+            echo "run_nightly=true"  >> $GITHUB_OUTPUT
+          else
+            echo "run_nightly=false" >> $GITHUB_OUTPUT
+          fi
+
+          # ── morning: production + upload ──────────────────────────────────
+          if [ "$SCHEDULE" = "0 4 * * *" ] || \
+             { [ "$EVENT" = "workflow_dispatch" ] && \
+               { [ "$STAGE" = "morning" ] || [ "$STAGE" = "all" ]; }; }; then
+            echo "run_morning=true"  >> $GITHUB_OUTPUT
+          else
+            echo "run_morning=false" >> $GITHUB_OUTPUT
+          fi
+
+          # ── longform: only Tuesday (2) or Friday (5), or forced ───────────
+          if [ "$DAY" = "2" ] || [ "$DAY" = "5" ] || [ "$FORCE" = "true" ]; then
+            echo "run_longform=true"  >> $GITHUB_OUTPUT
+            echo "Longform: YES (day=$DAY, force=$FORCE)"
+          else
+            echo "run_longform=false" >> $GITHUB_OUTPUT
+            echo "Longform: NO (day=$DAY)"
+          fi
+
+# ══════════════════════════════════════════════════════════════════════════════
+# NIGHTLY STAGE — Topic & Script Generation (20:00 UTC)
+# ══════════════════════════════════════════════════════════════════════════════
+
+  generate-topics:
+    name: Generate Topics (CH1–CH5)
+    needs: check-gate
+    if: needs.check-gate.outputs.run_nightly == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      models: read
+
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+      - run: pip install -r requirements.txt
+
+      - name: Generate topics for all channels
+        id: gen_topics
+        run: python scripts/generate_topics.py
+        env:
+          GROQ_API_KEY:           ${{ secrets.GROQ_API_KEY }}
+          CEREBRAS_API_KEY:       ${{ secrets.CEREBRAS_API_KEY }}
+          SAMBANOVA_API_KEY:      ${{ secrets.SAMBANOVA_API_KEY }}
+          GEMINI_API_KEY:         ${{ secrets.GEMINI_API_KEY }}
+          GITHUB_TOKEN:           ${{ github.token }}
+          TOGETHER_API_KEY:       ${{ secrets.TOGETHER_API_KEY }}
+          OPENROUTER_KEY:         ${{ secrets.OPENROUTER_KEY }}
+          CLOUDFLARE_API_TOKEN:   ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID:  ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          CLOUDINARY_CLOUD_NAME:  ${{ secrets.CLOUDINARY_CLOUD_NAME }}
+          CLOUDINARY_API_KEY:     ${{ secrets.CLOUDINARY_API_KEY }}
+          CLOUDINARY_API_SECRET:  ${{ secrets.CLOUDINARY_API_SECRET }}
+          TELEGRAM_BOT_TOKEN:     ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID:       ${{ secrets.TELEGRAM_CHAT_ID }}
+
+      - name: Notify — topics generated
+        if: always()
+        run: |
+          STATUS="${{ job.status }}"
+          python - <<PYEOF
+          import os
+          from datetime import date
+          from scripts.telegram_notify import send_message
+          from scripts.email_notify import notify_pipeline_success, notify_pipeline_failure
+          status = "${STATUS}"
+          icon = "✅" if status == "success" else "❌"
+          date_str = date.today().isoformat()
+          provider = os.environ.get("AI_PROVIDER", "")
+          note = f" _(via {provider})_" if provider else ""
+          send_message(f"{icon} *Nightly* — Topics generated for {date_str}{note}")
+          if status == "success":
+              notify_pipeline_success("Nightly — Topics", date_str, provider)
+          else:
+              notify_pipeline_failure("Nightly — Topics", date_str, f"Job: {status}")
+          PYEOF
+        env:
+          TELEGRAM_BOT_TOKEN:  ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID:    ${{ secrets.TELEGRAM_CHAT_ID }}
+          GMAIL_USER:          ${{ secrets.GMAIL_USER }}
+          GMAIL_APP_PASSWORD:  ${{ secrets.GMAIL_APP_PASSWORD }}
+          GMAIL_TO:            ${{ secrets.GMAIL_TO }}
+          AI_PROVIDER:         ${{ steps.gen_topics.outputs.ai_provider }}
+        continue-on-error: true
+
+  generate-scripts:
+    name: Generate 7-Stage Scripts (CH1–CH5)
+    needs: generate-topics
+    if: needs.generate-topics.result == 'success'
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    permissions:
+      contents: read
+      models: read
+
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+      - run: pip install -r requirements.txt
+
+      - name: Generate full production manifests
+        id: gen_scripts
+        run: python scripts/write_scripts.py
+        env:
+          GROQ_API_KEY:           ${{ secrets.GROQ_API_KEY }}
+          CEREBRAS_API_KEY:       ${{ secrets.CEREBRAS_API_KEY }}
+          SAMBANOVA_API_KEY:      ${{ secrets.SAMBANOVA_API_KEY }}
+          GEMINI_API_KEY:         ${{ secrets.GEMINI_API_KEY }}
+          GITHUB_TOKEN:           ${{ github.token }}
+          TOGETHER_API_KEY:       ${{ secrets.TOGETHER_API_KEY }}
+          OPENROUTER_KEY:         ${{ secrets.OPENROUTER_KEY }}
+          CLOUDFLARE_API_TOKEN:   ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID:  ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          CLOUDINARY_CLOUD_NAME:  ${{ secrets.CLOUDINARY_CLOUD_NAME }}
+          CLOUDINARY_API_KEY:     ${{ secrets.CLOUDINARY_API_KEY }}
+          CLOUDINARY_API_SECRET:  ${{ secrets.CLOUDINARY_API_SECRET }}
+          TELEGRAM_BOT_TOKEN:     ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID:       ${{ secrets.TELEGRAM_CHAT_ID }}
+
+      - name: Notify — scripts generated
+        if: always()
+        run: |
+          STATUS="${{ job.status }}"
+          python - <<PYEOF
+          import os
+          from datetime import date
+          from scripts.telegram_notify import send_message
+          from scripts.email_notify import notify_pipeline_success, notify_pipeline_failure
+          status = "${STATUS}"
+          icon = "✅" if status == "success" else "❌"
+          date_str = date.today().isoformat()
+          provider = os.environ.get("AI_PROVIDER", "")
+          note = f" _(via {provider})_" if provider else ""
+          send_message(f"{icon} *Nightly* — Script generation {status} for {date_str}{note}")
+          if status == "success":
+              notify_pipeline_success("Nightly — Scripts", date_str, provider)
+          else:
+              notify_pipeline_failure("Nightly — Scripts", date_str, f"Job: {status}")
+          PYEOF
+        env:
+          TELEGRAM_BOT_TOKEN:  ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID:    ${{ secrets.TELEGRAM_CHAT_ID }}
+          GMAIL_USER:          ${{ secrets.GMAIL_USER }}
+          GMAIL_APP_PASSWORD:  ${{ secrets.GMAIL_APP_PASSWORD }}
+          GMAIL_TO:            ${{ secrets.GMAIL_TO }}
+          AI_PROVIDER:         ${{ steps.gen_scripts.outputs.ai_provider }}
+        continue-on-error: true
+
+# ══════════════════════════════════════════════════════════════════════════════
+# MORNING STAGE — Longform Production (Tue/Fri) + 2 Shorts/day (every day)
+# ══════════════════════════════════════════════════════════════════════════════
+
+# ── SHARED SETUP STEPS (inlined per job — GitHub Actions has no reuse without composite actions) ──
+
+# ──────────────────────────────────────────────────────────────────────────────
+# LONGFORM — CH1 Dopamine Loop
+# ──────────────────────────────────────────────────────────────────────────────
+  produce-ch1:
+    name: CH1 Longform — Dopamine Loop
+    needs: check-gate
+    if: >-
+      needs.check-gate.outputs.run_morning == 'true' &&
+      needs.check-gate.outputs.run_longform == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    continue-on-error: true
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.11", cache: pip }
+      - uses: actions/setup-node@v4
+        with: { node-version: "20", cache: npm, cache-dependency-path: remotion/package.json }
+      - run: sudo apt-get update -qq && sudo apt-get install -y ffmpeg
+      - run: pip install -r requirements.txt
+      - run: cd remotion && npm ci
+
+      - name: Download manifest from Cloudinary
+        run: |
+          python - <<'PYEOF'
+          import cloudinary, cloudinary.api, os, urllib.request
+          from datetime import date
+          from pathlib import Path
+          cloudinary.config(cloud_name=os.environ["CLOUDINARY_CLOUD_NAME"],
+                            api_key=os.environ["CLOUDINARY_API_KEY"],
+                            api_secret=os.environ["CLOUDINARY_API_SECRET"], secure=True)
+          date_str = date.today().isoformat()
+          r = cloudinary.api.resource(f"automation/manifests/{date_str}/ch1", resource_type="raw")
+          Path("temp/manifests").mkdir(parents=True, exist_ok=True)
+          urllib.request.urlretrieve(r["secure_url"], "temp/manifests/ch1.json")
+          print(f"Downloaded ch1 manifest for {date_str}")
+          PYEOF
+        env:
+          CLOUDINARY_CLOUD_NAME: ${{ secrets.CLOUDINARY_CLOUD_NAME }}
+          CLOUDINARY_API_KEY:    ${{ secrets.CLOUDINARY_API_KEY }}
+          CLOUDINARY_API_SECRET: ${{ secrets.CLOUDINARY_API_SECRET }}
+
+      - name: Notify start
+        run: python -c "from scripts.telegram_notify import send_message; from datetime import date; send_message(f'*Morning* — CH1 Dopamine Loop started ({date.today().isoformat()})')"
+        env: { TELEGRAM_BOT_TOKEN: "${{ secrets.TELEGRAM_BOT_TOKEN }}", TELEGRAM_CHAT_ID: "${{ secrets.TELEGRAM_CHAT_ID }}" }
+        continue-on-error: true
+
+      - run: python scripts/stock_footage.py temp/manifests/ch1.json
+        env: { PEXELS_API_KEY: "${{ secrets.PEXELS_API_KEY }}" }
+      - run: python scripts/generate_voiceover.py temp/manifests/ch1.json
+      - run: python scripts/generate_thumbnail.py temp/manifests/ch1.json
+      - run: python scripts/render_mographs.py temp/manifests/ch1.json
+      - run: python scripts/assemble_video.py temp/manifests/ch1.json
+      - name: Upload to YouTube
+        run: python scripts/upload_youtube.py temp/manifests/ch1.json
+        env:
+          YOUTUBE_CLIENT_ID:          ${{ secrets.YOUTUBE_CLIENT_ID }}
+          YOUTUBE_CLIENT_SECRET:      ${{ secrets.YOUTUBE_CLIENT_SECRET }}
+          YOUTUBE_REFRESH_TOKEN_CH1:  ${{ secrets.YOUTUBE_REFRESH_TOKEN_CH1 }}
+      - name: Back up to Drive
+        run: python scripts/upload_drive.py temp/manifests/ch1.json
+        env: { GOOGLE_DRIVE_CREDENTIALS: "${{ secrets.GOOGLE_DRIVE_CREDENTIALS }}" }
+        continue-on-error: true
+
+      - name: Notify complete
+        if: always()
+        run: |
+          STATUS="${{ job.status }}"
+          python - <<PYEOF
+          import os; from datetime import date
+          from scripts.telegram_notify import send_message
+          from scripts.email_notify import notify_pipeline_success, notify_pipeline_failure
+          s="${STATUS}"; icon="✅" if s=="success" else "❌"; d=date.today().isoformat()
+          send_message(f"{icon} *Morning* — CH1 Dopamine Loop {s} ({d})")
+          notify_pipeline_success("Morning — CH1",d,"") if s=="success" else notify_pipeline_failure("Morning — CH1",d,f"Job: {s}")
+          PYEOF
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID:   ${{ secrets.TELEGRAM_CHAT_ID }}
+          GMAIL_USER:         ${{ secrets.GMAIL_USER }}
+          GMAIL_APP_PASSWORD: ${{ secrets.GMAIL_APP_PASSWORD }}
+          GMAIL_TO:           ${{ secrets.GMAIL_TO }}
+        continue-on-error: true
+
+# ──────────────────────────────────────────────────────────────────────────────
+# LONGFORM — CH2 FinanceFiction
+# ──────────────────────────────────────────────────────────────────────────────
+  produce-ch2:
+    name: CH2 Longform — FinanceFiction
+    needs: check-gate
+    if: >-
+      needs.check-gate.outputs.run_morning == 'true' &&
+      needs.check-gate.outputs.run_longform == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    continue-on-error: true
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.11", cache: pip }
+      - uses: actions/setup-node@v4
+        with: { node-version: "20", cache: npm, cache-dependency-path: remotion/package.json }
+      - run: sudo apt-get update -qq && sudo apt-get install -y ffmpeg
+      - run: pip install -r requirements.txt
+      - run: cd remotion && npm ci
+
+      - name: Download manifest from Cloudinary
+        run: |
+          python - <<'PYEOF'
+          import cloudinary, cloudinary.api, os, urllib.request
+          from datetime import date
+          from pathlib import Path
+          cloudinary.config(cloud_name=os.environ["CLOUDINARY_CLOUD_NAME"],
+                            api_key=os.environ["CLOUDINARY_API_KEY"],
+                            api_secret=os.environ["CLOUDINARY_API_SECRET"], secure=True)
+          date_str = date.today().isoformat()
+          r = cloudinary.api.resource(f"automation/manifests/{date_str}/ch2", resource_type="raw")
+          Path("temp/manifests").mkdir(parents=True, exist_ok=True)
+          urllib.request.urlretrieve(r["secure_url"], "temp/manifests/ch2.json")
+          print(f"Downloaded ch2 manifest for {date_str}")
+          PYEOF
+        env:
+          CLOUDINARY_CLOUD_NAME: ${{ secrets.CLOUDINARY_CLOUD_NAME }}
+          CLOUDINARY_API_KEY:    ${{ secrets.CLOUDINARY_API_KEY }}
+          CLOUDINARY_API_SECRET: ${{ secrets.CLOUDINARY_API_SECRET }}
+
+      - name: Notify start
+        run: python -c "from scripts.telegram_notify import send_message; from datetime import date; send_message(f'*Morning* — CH2 FinanceFiction started ({date.today().isoformat()})')"
+        env: { TELEGRAM_BOT_TOKEN: "${{ secrets.TELEGRAM_BOT_TOKEN }}", TELEGRAM_CHAT_ID: "${{ secrets.TELEGRAM_CHAT_ID }}" }
+        continue-on-error: true
+
+      - run: python scripts/stock_footage.py temp/manifests/ch2.json
+        env: { PEXELS_API_KEY: "${{ secrets.PEXELS_API_KEY }}" }
+      - run: python scripts/generate_voiceover.py temp/manifests/ch2.json
+      - run: python scripts/generate_thumbnail.py temp/manifests/ch2.json
+      - run: python scripts/render_mographs.py temp/manifests/ch2.json
+      - run: python scripts/assemble_video.py temp/manifests/ch2.json
+      - name: Upload to YouTube
+        run: python scripts/upload_youtube.py temp/manifests/ch2.json
+        env:
+          YOUTUBE_CLIENT_ID:          ${{ secrets.YOUTUBE_CLIENT_ID }}
+          YOUTUBE_CLIENT_SECRET:      ${{ secrets.YOUTUBE_CLIENT_SECRET }}
+          YOUTUBE_REFRESH_TOKEN_CH2:  ${{ secrets.YOUTUBE_REFRESH_TOKEN_CH2 }}
+      - name: Back up to Drive
+        run: python scripts/upload_drive.py temp/manifests/ch2.json
+        env: { GOOGLE_DRIVE_CREDENTIALS: "${{ secrets.GOOGLE_DRIVE_CREDENTIALS }}" }
+        continue-on-error: true
+
+      - name: Notify complete
+        if: always()
+        run: |
+          STATUS="${{ job.status }}"
+          python - <<PYEOF
+          import os; from datetime import date
+          from scripts.telegram_notify import send_message
+          from scripts.email_notify import notify_pipeline_success, notify_pipeline_failure
+          s="${STATUS}"; icon="✅" if s=="success" else "❌"; d=date.today().isoformat()
+          send_message(f"{icon} *Morning* — CH2 FinanceFiction {s} ({d})")
+          notify_pipeline_success("Morning — CH2",d,"") if s=="success" else notify_pipeline_failure("Morning — CH2",d,f"Job: {s}")
+          PYEOF
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID:   ${{ secrets.TELEGRAM_CHAT_ID }}
+          GMAIL_USER:         ${{ secrets.GMAIL_USER }}
+          GMAIL_APP_PASSWORD: ${{ secrets.GMAIL_APP_PASSWORD }}
+          GMAIL_TO:           ${{ secrets.GMAIL_TO }}
+        continue-on-error: true
+
+# ──────────────────────────────────────────────────────────────────────────────
+# LONGFORM — CH3 Redacted
+# ──────────────────────────────────────────────────────────────────────────────
+  produce-ch3:
+    name: CH3 Longform — Redacted
+    needs: check-gate
+    if: >-
+      needs.check-gate.outputs.run_morning == 'true' &&
+      needs.check-gate.outputs.run_longform == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    continue-on-error: true
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.11", cache: pip }
+      - uses: actions/setup-node@v4
+        with: { node-version: "20", cache: npm, cache-dependency-path: remotion/package.json }
+      - run: sudo apt-get update -qq && sudo apt-get install -y ffmpeg
+      - run: pip install -r requirements.txt
+      - run: cd remotion && npm ci
+
+      - name: Download manifest from Cloudinary
+        run: |
+          python - <<'PYEOF'
+          import cloudinary, cloudinary.api, os, urllib.request
+          from datetime import date
+          from pathlib import Path
+          cloudinary.config(cloud_name=os.environ["CLOUDINARY_CLOUD_NAME"],
+                            api_key=os.environ["CLOUDINARY_API_KEY"],
+                            api_secret=os.environ["CLOUDINARY_API_SECRET"], secure=True)
+          date_str = date.today().isoformat()
+          r = cloudinary.api.resource(f"automation/manifests/{date_str}/ch3", resource_type="raw")
+          Path("temp/manifests").mkdir(parents=True, exist_ok=True)
+          urllib.request.urlretrieve(r["secure_url"], "temp/manifests/ch3.json")
+          print(f"Downloaded ch3 manifest for {date_str}")
+          PYEOF
+        env:
+          CLOUDINARY_CLOUD_NAME: ${{ secrets.CLOUDINARY_CLOUD_NAME }}
+          CLOUDINARY_API_KEY:    ${{ secrets.CLOUDINARY_API_KEY }}
+          CLOUDINARY_API_SECRET: ${{ secrets.CLOUDINARY_API_SECRET }}
+
+      - name: Notify start
+        run: python -c "from scripts.telegram_notify import send_message; from datetime import date; send_message(f'*Morning* — CH3 Redacted started ({date.today().isoformat()})')"
+        env: { TELEGRAM_BOT_TOKEN: "${{ secrets.TELEGRAM_BOT_TOKEN }}", TELEGRAM_CHAT_ID: "${{ secrets.TELEGRAM_CHAT_ID }}" }
+        continue-on-error: true
+
+      - run: python scripts/stock_footage.py temp/manifests/ch3.json
+        env: { PEXELS_API_KEY: "${{ secrets.PEXELS_API_KEY }}" }
+      - run: python scripts/generate_voiceover.py temp/manifests/ch3.json
+      - run: python scripts/generate_thumbnail.py temp/manifests/ch3.json
+      - run: python scripts/render_mographs.py temp/manifests/ch3.json
+      - run: python scripts/assemble_video.py temp/manifests/ch3.json
+      - name: Upload to YouTube
+        run: python scripts/upload_youtube.py temp/manifests/ch3.json
+        env:
+          YOUTUBE_CLIENT_ID:          ${{ secrets.YOUTUBE_CLIENT_ID }}
+          YOUTUBE_CLIENT_SECRET:      ${{ secrets.YOUTUBE_CLIENT_SECRET }}
+          YOUTUBE_REFRESH_TOKEN_CH3:  ${{ secrets.YOUTUBE_REFRESH_TOKEN_CH3 }}
+      - name: Back up to Drive
+        run: python scripts/upload_drive.py temp/manifests/ch3.json
+        env: { GOOGLE_DRIVE_CREDENTIALS: "${{ secrets.GOOGLE_DRIVE_CREDENTIALS }}" }
+        continue-on-error: true
+
+      - name: Notify complete
+        if: always()
+        run: |
+          STATUS="${{ job.status }}"
+          python - <<PYEOF
+          import os; from datetime import date
+          from scripts.telegram_notify import send_message
+          from scripts.email_notify import notify_pipeline_success, notify_pipeline_failure
+          s="${STATUS}"; icon="✅" if s=="success" else "❌"; d=date.today().isoformat()
+          send_message(f"{icon} *Morning* — CH3 Redacted {s} ({d})")
+          notify_pipeline_success("Morning — CH3",d,"") if s=="success" else notify_pipeline_failure("Morning — CH3",d,f"Job: {s}")
+          PYEOF
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID:   ${{ secrets.TELEGRAM_CHAT_ID }}
+          GMAIL_USER:         ${{ secrets.GMAIL_USER }}
+          GMAIL_APP_PASSWORD: ${{ secrets.GMAIL_APP_PASSWORD }}
+          GMAIL_TO:           ${{ secrets.GMAIL_TO }}
+        continue-on-error: true
+
+# ──────────────────────────────────────────────────────────────────────────────
+# LONGFORM — CH4 The Grey Matter
+# ──────────────────────────────────────────────────────────────────────────────
+  produce-ch4:
+    name: CH4 Longform — The Grey Matter
+    needs: check-gate
+    if: >-
+      needs.check-gate.outputs.run_morning == 'true' &&
+      needs.check-gate.outputs.run_longform == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    continue-on-error: true
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.11", cache: pip }
+      - uses: actions/setup-node@v4
+        with: { node-version: "20", cache: npm, cache-dependency-path: remotion/package.json }
+      - run: sudo apt-get update -qq && sudo apt-get install -y ffmpeg
+      - run: pip install -r requirements.txt
+      - run: cd remotion && npm ci
+
+      - name: Download manifest from Cloudinary
+        run: |
+          python - <<'PYEOF'
+          import cloudinary, cloudinary.api, os, urllib.request
+          from datetime import date
+          from pathlib import Path
+          cloudinary.config(cloud_name=os.environ["CLOUDINARY_CLOUD_NAME"],
+                            api_key=os.environ["CLOUDINARY_API_KEY"],
+                            api_secret=os.environ["CLOUDINARY_API_SECRET"], secure=True)
+          date_str = date.today().isoformat()
+          r = cloudinary.api.resource(f"automation/manifests/{date_str}/ch4", resource_type="raw")
+          Path("temp/manifests").mkdir(parents=True, exist_ok=True)
+          urllib.request.urlretrieve(r["secure_url"], "temp/manifests/ch4.json")
+          print(f"Downloaded ch4 manifest for {date_str}")
+          PYEOF
+        env:
+          CLOUDINARY_CLOUD_NAME: ${{ secrets.CLOUDINARY_CLOUD_NAME }}
+          CLOUDINARY_API_KEY:    ${{ secrets.CLOUDINARY_API_KEY }}
+          CLOUDINARY_API_SECRET: ${{ secrets.CLOUDINARY_API_SECRET }}
+
+      - name: Notify start
+        run: python -c "from scripts.telegram_notify import send_message; from datetime import date; send_message(f'*Morning* — CH4 The Grey Matter started ({date.today().isoformat()})')"
+        env: { TELEGRAM_BOT_TOKEN: "${{ secrets.TELEGRAM_BOT_TOKEN }}", TELEGRAM_CHAT_ID: "${{ secrets.TELEGRAM_CHAT_ID }}" }
+        continue-on-error: true
+
+      - run: python scripts/stock_footage.py temp/manifests/ch4.json
+        env: { PEXELS_API_KEY: "${{ secrets.PEXELS_API_KEY }}" }
+      - run: python scripts/generate_voiceover.py temp/manifests/ch4.json
+      - run: python scripts/generate_thumbnail.py temp/manifests/ch4.json
+      - run: python scripts/render_mographs.py temp/manifests/ch4.json
+      - run: python scripts/assemble_video.py temp/manifests/ch4.json
+      - name: Upload to YouTube
+        run: python scripts/upload_youtube.py temp/manifests/ch4.json
+        env:
+          YOUTUBE_CLIENT_ID:          ${{ secrets.YOUTUBE_CLIENT_ID }}
+          YOUTUBE_CLIENT_SECRET:      ${{ secrets.YOUTUBE_CLIENT_SECRET }}
+          YOUTUBE_REFRESH_TOKEN_CH4:  ${{ secrets.YOUTUBE_REFRESH_TOKEN_CH4 }}
+      - name: Back up to Drive
+        run: python scripts/upload_drive.py temp/manifests/ch4.json
+        env: { GOOGLE_DRIVE_CREDENTIALS: "${{ secrets.GOOGLE_DRIVE_CREDENTIALS }}" }
+        continue-on-error: true
+
+      - name: Notify complete
+        if: always()
+        run: |
+          STATUS="${{ job.status }}"
+          python - <<PYEOF
+          import os; from datetime import date
+          from scripts.telegram_notify import send_message
+          from scripts.email_notify import notify_pipeline_success, notify_pipeline_failure
+          s="${STATUS}"; icon="✅" if s=="success" else "❌"; d=date.today().isoformat()
+          send_message(f"{icon} *Morning* — CH4 The Grey Matter {s} ({d})")
+          notify_pipeline_success("Morning — CH4",d,"") if s=="success" else notify_pipeline_failure("Morning — CH4",d,f"Job: {s}")
+          PYEOF
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID:   ${{ secrets.TELEGRAM_CHAT_ID }}
+          GMAIL_USER:         ${{ secrets.GMAIL_USER }}
+          GMAIL_APP_PASSWORD: ${{ secrets.GMAIL_APP_PASSWORD }}
+          GMAIL_TO:           ${{ secrets.GMAIL_TO }}
+        continue-on-error: true
+
+# ──────────────────────────────────────────────────────────────────────────────
+# LONGFORM — CH5 The Quiet Record
+# ──────────────────────────────────────────────────────────────────────────────
+  produce-ch5:
+    name: CH5 Longform — The Quiet Record
+    needs: check-gate
+    if: >-
+      needs.check-gate.outputs.run_morning == 'true' &&
+      needs.check-gate.outputs.run_longform == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    continue-on-error: true
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.11", cache: pip }
+      - uses: actions/setup-node@v4
+        with: { node-version: "20", cache: npm, cache-dependency-path: remotion/package.json }
+      - run: sudo apt-get update -qq && sudo apt-get install -y ffmpeg
+      - run: pip install -r requirements.txt
+      - run: cd remotion && npm ci
+
+      - name: Download manifest from Cloudinary
+        run: |
+          python - <<'PYEOF'
+          import cloudinary, cloudinary.api, os, urllib.request
+          from datetime import date
+          from pathlib import Path
+          cloudinary.config(cloud_name=os.environ["CLOUDINARY_CLOUD_NAME"],
+                            api_key=os.environ["CLOUDINARY_API_KEY"],
+                            api_secret=os.environ["CLOUDINARY_API_SECRET"], secure=True)
+          date_str = date.today().isoformat()
+          r = cloudinary.api.resource(f"automation/manifests/{date_str}/ch5", resource_type="raw")
+          Path("temp/manifests").mkdir(parents=True, exist_ok=True)
+          urllib.request.urlretrieve(r["secure_url"], "temp/manifests/ch5.json")
+          print(f"Downloaded ch5 manifest for {date_str}")
+          PYEOF
+        env:
+          CLOUDINARY_CLOUD_NAME: ${{ secrets.CLOUDINARY_CLOUD_NAME }}
+          CLOUDINARY_API_KEY:    ${{ secrets.CLOUDINARY_API_KEY }}
+          CLOUDINARY_API_SECRET: ${{ secrets.CLOUDINARY_API_SECRET }}
+
+      - name: Notify start
+        run: python -c "from scripts.telegram_notify import send_message; from datetime import date; send_message(f'*Morning* — CH5 The Quiet Record started ({date.today().isoformat()})')"
+        env: { TELEGRAM_BOT_TOKEN: "${{ secrets.TELEGRAM_BOT_TOKEN }}", TELEGRAM_CHAT_ID: "${{ secrets.TELEGRAM_CHAT_ID }}" }
+        continue-on-error: true
+
+      - run: python scripts/stock_footage.py temp/manifests/ch5.json
+        env: { PEXELS_API_KEY: "${{ secrets.PEXELS_API_KEY }}" }
+      - run: python scripts/generate_voiceover.py temp/manifests/ch5.json
+      - run: python scripts/generate_thumbnail.py temp/manifests/ch5.json
+      - run: python scripts/render_mographs.py temp/manifests/ch5.json
+      - run: python scripts/assemble_video.py temp/manifests/ch5.json
+      - name: Upload to YouTube
+        run: python scripts/upload_youtube.py temp/manifests/ch5.json
+        env:
+          YOUTUBE_CLIENT_ID:          ${{ secrets.YOUTUBE_CLIENT_ID }}
+          YOUTUBE_CLIENT_SECRET:      ${{ secrets.YOUTUBE_CLIENT_SECRET }}
+          YOUTUBE_REFRESH_TOKEN_CH5:  ${{ secrets.YOUTUBE_REFRESH_TOKEN_CH5 }}
+      - name: Back up to Drive
+        run: python scripts/upload_drive.py temp/manifests/ch5.json
+        env: { GOOGLE_DRIVE_CREDENTIALS: "${{ secrets.GOOGLE_DRIVE_CREDENTIALS }}" }
+        continue-on-error: true
+
+      - name: Notify complete
+        if: always()
+        run: |
+          STATUS="${{ job.status }}"
+          python - <<PYEOF
+          import os; from datetime import date
+          from scripts.telegram_notify import send_message
+          from scripts.email_notify import notify_pipeline_success, notify_pipeline_failure
+          s="${STATUS}"; icon="✅" if s=="success" else "❌"; d=date.today().isoformat()
+          send_message(f"{icon} *Morning* — CH5 The Quiet Record {s} ({d})")
+          notify_pipeline_success("Morning — CH5",d,"") if s=="success" else notify_pipeline_failure("Morning — CH5",d,f"Job: {s}")
+          PYEOF
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID:   ${{ secrets.TELEGRAM_CHAT_ID }}
+          GMAIL_USER:         ${{ secrets.GMAIL_USER }}
+          GMAIL_APP_PASSWORD: ${{ secrets.GMAIL_APP_PASSWORD }}
+          GMAIL_TO:           ${{ secrets.GMAIL_TO }}
+        continue-on-error: true
+
+# ══════════════════════════════════════════════════════════════════════════════
+# SHORTS — 2 per channel per day (all 5 channels, runs every morning)
+# ══════════════════════════════════════════════════════════════════════════════
+
+# ── SHARED STEPS MACRO (inlined — no composite actions needed) ────────────────
+# Each shorts job: checkout → python → node → ffmpeg → pip → npm ci →
+#   generate_shorts.py → assemble_shorts.py → upload_youtube.py → upload_drive.py
+
+  shorts-ch1-1:
+    name: CH1 Short 1 — Dopamine Loop
+    needs: check-gate
+    if: needs.check-gate.outputs.run_morning == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    continue-on-error: true
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.11", cache: pip }
+      - uses: actions/setup-node@v4
+        with: { node-version: "20", cache: npm, cache-dependency-path: remotion/package.json }
+      - run: sudo apt-get update -qq && sudo apt-get install -y ffmpeg
+      - run: pip install -r requirements.txt
+      - run: cd remotion && npm ci
+        continue-on-error: true
+      - name: Generate short topic + script
+        run: python scripts/generate_shorts.py ch1 1
+        env:
+          GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
+          CEREBRAS_API_KEY: ${{ secrets.CEREBRAS_API_KEY }}
+          SAMBANOVA_API_KEY: ${{ secrets.SAMBANOVA_API_KEY }}
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          GITHUB_TOKEN: ${{ github.token }}
+          TOGETHER_API_KEY: ${{ secrets.TOGETHER_API_KEY }}
+          OPENROUTER_KEY: ${{ secrets.OPENROUTER_KEY }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          CLOUDINARY_CLOUD_NAME: ${{ secrets.CLOUDINARY_CLOUD_NAME }}
+          CLOUDINARY_API_KEY: ${{ secrets.CLOUDINARY_API_KEY }}
+          CLOUDINARY_API_SECRET: ${{ secrets.CLOUDINARY_API_SECRET }}
+      - run: python scripts/assemble_shorts.py temp/manifests/ch1_short_1.json
+        env: { PEXELS_API_KEY: "${{ secrets.PEXELS_API_KEY }}" }
+      - name: Upload to YouTube
+        run: python scripts/upload_youtube.py temp/manifests/ch1_short_1.json
+        env:
+          YOUTUBE_CLIENT_ID: ${{ secrets.YOUTUBE_CLIENT_ID }}
+          YOUTUBE_CLIENT_SECRET: ${{ secrets.YOUTUBE_CLIENT_SECRET }}
+          YOUTUBE_REFRESH_TOKEN_CH1: ${{ secrets.YOUTUBE_REFRESH_TOKEN_CH1 }}
+      - run: python scripts/upload_drive.py temp/manifests/ch1_short_1.json
+        env: { GOOGLE_DRIVE_CREDENTIALS: "${{ secrets.GOOGLE_DRIVE_CREDENTIALS }}" }
+        continue-on-error: true
+
+  shorts-ch1-2:
+    name: CH1 Short 2 — Dopamine Loop
+    needs: check-gate
+    if: needs.check-gate.outputs.run_morning == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    continue-on-error: true
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.11", cache: pip }
+      - uses: actions/setup-node@v4
+        with: { node-version: "20", cache: npm, cache-dependency-path: remotion/package.json }
+      - run: sudo apt-get update -qq && sudo apt-get install -y ffmpeg
+      - run: pip install -r requirements.txt
+      - run: cd remotion && npm ci
+        continue-on-error: true
+      - name: Generate short topic + script
+        run: python scripts/generate_shorts.py ch1 2
+        env:
+          GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
+          CEREBRAS_API_KEY: ${{ secrets.CEREBRAS_API_KEY }}
+          SAMBANOVA_API_KEY: ${{ secrets.SAMBANOVA_API_KEY }}
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          GITHUB_TOKEN: ${{ github.token }}
+          TOGETHER_API_KEY: ${{ secrets.TOGETHER_API_KEY }}
+          OPENROUTER_KEY: ${{ secrets.OPENROUTER_KEY }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          CLOUDINARY_CLOUD_NAME: ${{ secrets.CLOUDINARY_CLOUD_NAME }}
+          CLOUDINARY_API_KEY: ${{ secrets.CLOUDINARY_API_KEY }}
+          CLOUDINARY_API_SECRET: ${{ secrets.CLOUDINARY_API_SECRET }}
+      - run: python scripts/assemble_shorts.py temp/manifests/ch1_short_2.json
+        env: { PEXELS_API_KEY: "${{ secrets.PEXELS_API_KEY }}" }
+      - name: Upload to YouTube
+        run: python scripts/upload_youtube.py temp/manifests/ch1_short_2.json
+        env:
+          YOUTUBE_CLIENT_ID: ${{ secrets.YOUTUBE_CLIENT_ID }}
+          YOUTUBE_CLIENT_SECRET: ${{ secrets.YOUTUBE_CLIENT_SECRET }}
+          YOUTUBE_REFRESH_TOKEN_CH1: ${{ secrets.YOUTUBE_REFRESH_TOKEN_CH1 }}
+      - run: python scripts/upload_drive.py temp/manifests/ch1_short_2.json
+        env: { GOOGLE_DRIVE_CREDENTIALS: "${{ secrets.GOOGLE_DRIVE_CREDENTIALS }}" }
+        continue-on-error: true
+
+  shorts-ch2-1:
+    name: CH2 Short 1 — FinanceFiction
+    needs: check-gate
+    if: needs.check-gate.outputs.run_morning == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    continue-on-error: true
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.11", cache: pip }
+      - uses: actions/setup-node@v4
+        with: { node-version: "20", cache: npm, cache-dependency-path: remotion/package.json }
+      - run: sudo apt-get update -qq && sudo apt-get install -y ffmpeg
+      - run: pip install -r requirements.txt
+      - run: cd remotion && npm ci
+        continue-on-error: true
+      - name: Generate short topic + script
+        run: python scripts/generate_shorts.py ch2 1
+        env:
+          GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
+          CEREBRAS_API_KEY: ${{ secrets.CEREBRAS_API_KEY }}
+          SAMBANOVA_API_KEY: ${{ secrets.SAMBANOVA_API_KEY }}
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          GITHUB_TOKEN: ${{ github.token }}
+          TOGETHER_API_KEY: ${{ secrets.TOGETHER_API_KEY }}
+          OPENROUTER_KEY: ${{ secrets.OPENROUTER_KEY }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          CLOUDINARY_CLOUD_NAME: ${{ secrets.CLOUDINARY_CLOUD_NAME }}
+          CLOUDINARY_API_KEY: ${{ secrets.CLOUDINARY_API_KEY }}
+          CLOUDINARY_API_SECRET: ${{ secrets.CLOUDINARY_API_SECRET }}
+      - run: python scripts/assemble_shorts.py temp/manifests/ch2_short_1.json
+        env: { PEXELS_API_KEY: "${{ secrets.PEXELS_API_KEY }}" }
+      - name: Upload to YouTube
+        run: python scripts/upload_youtube.py temp/manifests/ch2_short_1.json
+        env:
+          YOUTUBE_CLIENT_ID: ${{ secrets.YOUTUBE_CLIENT_ID }}
+          YOUTUBE_CLIENT_SECRET: ${{ secrets.YOUTUBE_CLIENT_SECRET }}
+          YOUTUBE_REFRESH_TOKEN_CH2: ${{ secrets.YOUTUBE_REFRESH_TOKEN_CH2 }}
+      - run: python scripts/upload_drive.py temp/manifests/ch2_short_1.json
+        env: { GOOGLE_DRIVE_CREDENTIALS: "${{ secrets.GOOGLE_DRIVE_CREDENTIALS }}" }
+        continue-on-error: true
+
+  shorts-ch2-2:
+    name: CH2 Short 2 — FinanceFiction
+    needs: check-gate
+    if: needs.check-gate.outputs.run_morning == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    continue-on-error: true
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.11", cache: pip }
+      - uses: actions/setup-node@v4
+        with: { node-version: "20", cache: npm, cache-dependency-path: remotion/package.json }
+      - run: sudo apt-get update -qq && sudo apt-get install -y ffmpeg
+      - run: pip install -r requirements.txt
+      - run: cd remotion && npm ci
+        continue-on-error: true
+      - name: Generate short topic + script
+        run: python scripts/generate_shorts.py ch2 2
+        env:
+          GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
+          CEREBRAS_API_KEY: ${{ secrets.CEREBRAS_API_KEY }}
+          SAMBANOVA_API_KEY: ${{ secrets.SAMBANOVA_API_KEY }}
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          GITHUB_TOKEN: ${{ github.token }}
+          TOGETHER_API_KEY: ${{ secrets.TOGETHER_API_KEY }}
+          OPENROUTER_KEY: ${{ secrets.OPENROUTER_KEY }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          CLOUDINARY_CLOUD_NAME: ${{ secrets.CLOUDINARY_CLOUD_NAME }}
+          CLOUDINARY_API_KEY: ${{ secrets.CLOUDINARY_API_KEY }}
+          CLOUDINARY_API_SECRET: ${{ secrets.CLOUDINARY_API_SECRET }}
+      - run: python scripts/assemble_shorts.py temp/manifests/ch2_short_2.json
+        env: { PEXELS_API_KEY: "${{ secrets.PEXELS_API_KEY }}" }
+      - name: Upload to YouTube
+        run: python scripts/upload_youtube.py temp/manifests/ch2_short_2.json
+        env:
+          YOUTUBE_CLIENT_ID: ${{ secrets.YOUTUBE_CLIENT_ID }}
+          YOUTUBE_CLIENT_SECRET: ${{ secrets.YOUTUBE_CLIENT_SECRET }}
+          YOUTUBE_REFRESH_TOKEN_CH2: ${{ secrets.YOUTUBE_REFRESH_TOKEN_CH2 }}
+      - run: python scripts/upload_drive.py temp/manifests/ch2_short_2.json
+        env: { GOOGLE_DRIVE_CREDENTIALS: "${{ secrets.GOOGLE_DRIVE_CREDENTIALS }}" }
+        continue-on-error: true
+
+  shorts-ch3-1:
+    name: CH3 Short 1 — Redacted
+    needs: check-gate
+    if: needs.check-gate.outputs.run_morning == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    continue-on-error: true
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.11", cache: pip }
+      - uses: actions/setup-node@v4
+        with: { node-version: "20", cache: npm, cache-dependency-path: remotion/package.json }
+      - run: sudo apt-get update -qq && sudo apt-get install -y ffmpeg
+      - run: pip install -r requirements.txt
+      - run: cd remotion && npm ci
+        continue-on-error: true
+      - name: Generate short topic + script
+        run: python scripts/generate_shorts.py ch3 1
+        env:
+          GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
+          CEREBRAS_API_KEY: ${{ secrets.CEREBRAS_API_KEY }}
+          SAMBANOVA_API_KEY: ${{ secrets.SAMBANOVA_API_KEY }}
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          GITHUB_TOKEN: ${{ github.token }}
+          TOGETHER_API_KEY: ${{ secrets.TOGETHER_API_KEY }}
+          OPENROUTER_KEY: ${{ secrets.OPENROUTER_KEY }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          CLOUDINARY_CLOUD_NAME: ${{ secrets.CLOUDINARY_CLOUD_NAME }}
+          CLOUDINARY_API_KEY: ${{ secrets.CLOUDINARY_API_KEY }}
+          CLOUDINARY_API_SECRET: ${{ secrets.CLOUDINARY_API_SECRET }}
+      - run: python scripts/assemble_shorts.py temp/manifests/ch3_short_1.json
+        env: { PEXELS_API_KEY: "${{ secrets.PEXELS_API_KEY }}" }
+      - name: Upload to YouTube
+        run: python scripts/upload_youtube.py temp/manifests/ch3_short_1.json
+        env:
+          YOUTUBE_CLIENT_ID: ${{ secrets.YOUTUBE_CLIENT_ID }}
+          YOUTUBE_CLIENT_SECRET: ${{ secrets.YOUTUBE_CLIENT_SECRET }}
+          YOUTUBE_REFRESH_TOKEN_CH3: ${{ secrets.YOUTUBE_REFRESH_TOKEN_CH3 }}
+      - run: python scripts/upload_drive.py temp/manifests/ch3_short_1.json
+        env: { GOOGLE_DRIVE_CREDENTIALS: "${{ secrets.GOOGLE_DRIVE_CREDENTIALS }}" }
+        continue-on-error: true
+
+  shorts-ch3-2:
+    name: CH3 Short 2 — Redacted
+    needs: check-gate
+    if: needs.check-gate.outputs.run_morning == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    continue-on-error: true
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.11", cache: pip }
+      - uses: actions/setup-node@v4
+        with: { node-version: "20", cache: npm, cache-dependency-path: remotion/package.json }
+      - run: sudo apt-get update -qq && sudo apt-get install -y ffmpeg
+      - run: pip install -r requirements.txt
+      - run: cd remotion && npm ci
+        continue-on-error: true
+      - name: Generate short topic + script
+        run: python scripts/generate_shorts.py ch3 2
+        env:
+          GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
+          CEREBRAS_API_KEY: ${{ secrets.CEREBRAS_API_KEY }}
+          SAMBANOVA_API_KEY: ${{ secrets.SAMBANOVA_API_KEY }}
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          GITHUB_TOKEN: ${{ github.token }}
+          TOGETHER_API_KEY: ${{ secrets.TOGETHER_API_KEY }}
+          OPENROUTER_KEY: ${{ secrets.OPENROUTER_KEY }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          CLOUDINARY_CLOUD_NAME: ${{ secrets.CLOUDINARY_CLOUD_NAME }}
+          CLOUDINARY_API_KEY: ${{ secrets.CLOUDINARY_API_KEY }}
+          CLOUDINARY_API_SECRET: ${{ secrets.CLOUDINARY_API_SECRET }}
+      - run: python scripts/assemble_shorts.py temp/manifests/ch3_short_2.json
+        env: { PEXELS_API_KEY: "${{ secrets.PEXELS_API_KEY }}" }
+      - name: Upload to YouTube
+        run: python scripts/upload_youtube.py temp/manifests/ch3_short_2.json
+        env:
+          YOUTUBE_CLIENT_ID: ${{ secrets.YOUTUBE_CLIENT_ID }}
+          YOUTUBE_CLIENT_SECRET: ${{ secrets.YOUTUBE_CLIENT_SECRET }}
+          YOUTUBE_REFRESH_TOKEN_CH3: ${{ secrets.YOUTUBE_REFRESH_TOKEN_CH3 }}
+      - run: python scripts/upload_drive.py temp/manifests/ch3_short_2.json
+        env: { GOOGLE_DRIVE_CREDENTIALS: "${{ secrets.GOOGLE_DRIVE_CREDENTIALS }}" }
+        continue-on-error: true
+
+  shorts-ch4-1:
+    name: CH4 Short 1 — The Grey Matter
+    needs: check-gate
+    if: needs.check-gate.outputs.run_morning == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    continue-on-error: true
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.11", cache: pip }
+      - uses: actions/setup-node@v4
+        with: { node-version: "20", cache: npm, cache-dependency-path: remotion/package.json }
+      - run: sudo apt-get update -qq && sudo apt-get install -y ffmpeg
+      - run: pip install -r requirements.txt
+      - run: cd remotion && npm ci
+        continue-on-error: true
+      - name: Generate short topic + script
+        run: python scripts/generate_shorts.py ch4 1
+        env:
+          GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
+          CEREBRAS_API_KEY: ${{ secrets.CEREBRAS_API_KEY }}
+          SAMBANOVA_API_KEY: ${{ secrets.SAMBANOVA_API_KEY }}
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          GITHUB_TOKEN: ${{ github.token }}
+          TOGETHER_API_KEY: ${{ secrets.TOGETHER_API_KEY }}
+          OPENROUTER_KEY: ${{ secrets.OPENROUTER_KEY }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          CLOUDINARY_CLOUD_NAME: ${{ secrets.CLOUDINARY_CLOUD_NAME }}
+          CLOUDINARY_API_KEY: ${{ secrets.CLOUDINARY_API_KEY }}
+          CLOUDINARY_API_SECRET: ${{ secrets.CLOUDINARY_API_SECRET }}
+      - run: python scripts/assemble_shorts.py temp/manifests/ch4_short_1.json
+        env: { PEXELS_API_KEY: "${{ secrets.PEXELS_API_KEY }}" }
+      - name: Upload to YouTube
+        run: python scripts/upload_youtube.py temp/manifests/ch4_short_1.json
+        env:
+          YOUTUBE_CLIENT_ID: ${{ secrets.YOUTUBE_CLIENT_ID }}
+          YOUTUBE_CLIENT_SECRET: ${{ secrets.YOUTUBE_CLIENT_SECRET }}
+          YOUTUBE_REFRESH_TOKEN_CH4: ${{ secrets.YOUTUBE_REFRESH_TOKEN_CH4 }}
+      - run: python scripts/upload_drive.py temp/manifests/ch4_short_1.json
+        env: { GOOGLE_DRIVE_CREDENTIALS: "${{ secrets.GOOGLE_DRIVE_CREDENTIALS }}" }
+        continue-on-error: true
+
+  shorts-ch4-2:
+    name: CH4 Short 2 — The Grey Matter
+    needs: check-gate
+    if: needs.check-gate.outputs.run_morning == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    continue-on-error: true
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.11", cache: pip }
+      - uses: actions/setup-node@v4
+        with: { node-version: "20", cache: npm, cache-dependency-path: remotion/package.json }
+      - run: sudo apt-get update -qq && sudo apt-get install -y ffmpeg
+      - run: pip install -r requirements.txt
+      - run: cd remotion && npm ci
+        continue-on-error: true
+      - name: Generate short topic + script
+        run: python scripts/generate_shorts.py ch4 2
+        env:
+          GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
+          CEREBRAS_API_KEY: ${{ secrets.CEREBRAS_API_KEY }}
+          SAMBANOVA_API_KEY: ${{ secrets.SAMBANOVA_API_KEY }}
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          GITHUB_TOKEN: ${{ github.token }}
+          TOGETHER_API_KEY: ${{ secrets.TOGETHER_API_KEY }}
+          OPENROUTER_KEY: ${{ secrets.OPENROUTER_KEY }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          CLOUDINARY_CLOUD_NAME: ${{ secrets.CLOUDINARY_CLOUD_NAME }}
+          CLOUDINARY_API_KEY: ${{ secrets.CLOUDINARY_API_KEY }}
+          CLOUDINARY_API_SECRET: ${{ secrets.CLOUDINARY_API_SECRET }}
+      - run: python scripts/assemble_shorts.py temp/manifests/ch4_short_2.json
+        env: { PEXELS_API_KEY: "${{ secrets.PEXELS_API_KEY }}" }
+      - name: Upload to YouTube
+        run: python scripts/upload_youtube.py temp/manifests/ch4_short_2.json
+        env:
+          YOUTUBE_CLIENT_ID: ${{ secrets.YOUTUBE_CLIENT_ID }}
+          YOUTUBE_CLIENT_SECRET: ${{ secrets.YOUTUBE_CLIENT_SECRET }}
+          YOUTUBE_REFRESH_TOKEN_CH4: ${{ secrets.YOUTUBE_REFRESH_TOKEN_CH4 }}
+      - run: python scripts/upload_drive.py temp/manifests/ch4_short_2.json
+        env: { GOOGLE_DRIVE_CREDENTIALS: "${{ secrets.GOOGLE_DRIVE_CREDENTIALS }}" }
+        continue-on-error: true
+
+  shorts-ch5-1:
+    name: CH5 Short 1 — The Quiet Record
+    needs: check-gate
+    if: needs.check-gate.outputs.run_morning == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    continue-on-error: true
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.11", cache: pip }
+      - uses: actions/setup-node@v4
+        with: { node-version: "20", cache: npm, cache-dependency-path: remotion/package.json }
+      - run: sudo apt-get update -qq && sudo apt-get install -y ffmpeg
+      - run: pip install -r requirements.txt
+      - run: cd remotion && npm ci
+        continue-on-error: true
+      - name: Generate short topic + script
+        run: python scripts/generate_shorts.py ch5 1
+        env:
+          GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
+          CEREBRAS_API_KEY: ${{ secrets.CEREBRAS_API_KEY }}
+          SAMBANOVA_API_KEY: ${{ secrets.SAMBANOVA_API_KEY }}
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          GITHUB_TOKEN: ${{ github.token }}
+          TOGETHER_API_KEY: ${{ secrets.TOGETHER_API_KEY }}
+          OPENROUTER_KEY: ${{ secrets.OPENROUTER_KEY }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          CLOUDINARY_CLOUD_NAME: ${{ secrets.CLOUDINARY_CLOUD_NAME }}
+          CLOUDINARY_API_KEY: ${{ secrets.CLOUDINARY_API_KEY }}
+          CLOUDINARY_API_SECRET: ${{ secrets.CLOUDINARY_API_SECRET }}
+      - run: python scripts/assemble_shorts.py temp/manifests/ch5_short_1.json
+        env: { PEXELS_API_KEY: "${{ secrets.PEXELS_API_KEY }}" }
+      - name: Upload to YouTube
+        run: python scripts/upload_youtube.py temp/manifests/ch5_short_1.json
+        env:
+          YOUTUBE_CLIENT_ID: ${{ secrets.YOUTUBE_CLIENT_ID }}
+          YOUTUBE_CLIENT_SECRET: ${{ secrets.YOUTUBE_CLIENT_SECRET }}
+          YOUTUBE_REFRESH_TOKEN_CH5: ${{ secrets.YOUTUBE_REFRESH_TOKEN_CH5 }}
+      - run: python scripts/upload_drive.py temp/manifests/ch5_short_1.json
+        env: { GOOGLE_DRIVE_CREDENTIALS: "${{ secrets.GOOGLE_DRIVE_CREDENTIALS }}" }
+        continue-on-error: true
+
+  shorts-ch5-2:
+    name: CH5 Short 2 — The Quiet Record
+    needs: check-gate
+    if: needs.check-gate.outputs.run_morning == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    continue-on-error: true
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.11", cache: pip }
+      - uses: actions/setup-node@v4
+        with: { node-version: "20", cache: npm, cache-dependency-path: remotion/package.json }
+      - run: sudo apt-get update -qq && sudo apt-get install -y ffmpeg
+      - run: pip install -r requirements.txt
+      - run: cd remotion && npm ci
+        continue-on-error: true
+      - name: Generate short topic + script
+        run: python scripts/generate_shorts.py ch5 2
+        env:
+          GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
+          CEREBRAS_API_KEY: ${{ secrets.CEREBRAS_API_KEY }}
+          SAMBANOVA_API_KEY: ${{ secrets.SAMBANOVA_API_KEY }}
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          GITHUB_TOKEN: ${{ github.token }}
+          TOGETHER_API_KEY: ${{ secrets.TOGETHER_API_KEY }}
+          OPENROUTER_KEY: ${{ secrets.OPENROUTER_KEY }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          CLOUDINARY_CLOUD_NAME: ${{ secrets.CLOUDINARY_CLOUD_NAME }}
+          CLOUDINARY_API_KEY: ${{ secrets.CLOUDINARY_API_KEY }}
+          CLOUDINARY_API_SECRET: ${{ secrets.CLOUDINARY_API_SECRET }}
+      - run: python scripts/assemble_shorts.py temp/manifests/ch5_short_2.json
+        env: { PEXELS_API_KEY: "${{ secrets.PEXELS_API_KEY }}" }
+      - name: Upload to YouTube
+        run: python scripts/upload_youtube.py temp/manifests/ch5_short_2.json
+        env:
+          YOUTUBE_CLIENT_ID: ${{ secrets.YOUTUBE_CLIENT_ID }}
+          YOUTUBE_CLIENT_SECRET: ${{ secrets.YOUTUBE_CLIENT_SECRET }}
+          YOUTUBE_REFRESH_TOKEN_CH5: ${{ secrets.YOUTUBE_REFRESH_TOKEN_CH5 }}
+      - run: python scripts/upload_drive.py temp/manifests/ch5_short_2.json
+        env: { GOOGLE_DRIVE_CREDENTIALS: "${{ secrets.GOOGLE_DRIVE_CREDENTIALS }}" }
+        continue-on-error: true
+
+# ══════════════════════════════════════════════════════════════════════════════
+# DAILY SUMMARY — always runs after all morning jobs
+# Only depends on shorts jobs (they always run); longform jobs are skipped Mon/Wed/Thu/Sat/Sun
+# ══════════════════════════════════════════════════════════════════════════════
+  daily-summary:
+    name: Daily Summary & Cleanup
+    needs:
+      - shorts-ch1-1
+      - shorts-ch1-2
+      - shorts-ch2-1
+      - shorts-ch2-2
+      - shorts-ch3-1
+      - shorts-ch3-2
+      - shorts-ch4-1
+      - shorts-ch4-2
+      - shorts-ch5-1
+      - shorts-ch5-2
+    if: always() && needs.shorts-ch1-1.result != 'skipped'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.11", cache: pip }
+      - run: pip install -r requirements.txt
+
+      - name: Send daily summary
+        run: |
+          python - <<'PYEOF'
+          from scripts.telegram_notify import send_message
+          from scripts.email_notify import notify_pipeline_success
+          from datetime import date
+          d = date.today().isoformat()
+          send_message(
+              f"📊 *Daily Summary* — All CH1-5 shorts produced for {d}. "
+              f"Longform runs Tue/Fri. Videos scheduled to publish at 18:00 UTC."
+          )
+          notify_pipeline_success("Morning — Daily Summary", d, "")
+          PYEOF
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID:   ${{ secrets.TELEGRAM_CHAT_ID }}
+          GMAIL_USER:         ${{ secrets.GMAIL_USER }}
+          GMAIL_APP_PASSWORD: ${{ secrets.GMAIL_APP_PASSWORD }}
+          GMAIL_TO:           ${{ secrets.GMAIL_TO }}
+        continue-on-error: true
+
+      - name: Cleanup old Cloudinary assets
+        run: python scripts/cleanup_cloudinary.py
+        env:
+          CLOUDINARY_CLOUD_NAME: ${{ secrets.CLOUDINARY_CLOUD_NAME }}
+          CLOUDINARY_API_KEY:    ${{ secrets.CLOUDINARY_API_KEY }}
+          CLOUDINARY_API_SECRET: ${{ secrets.CLOUDINARY_API_SECRET }}
+        continue-on-error: true
