@@ -255,14 +255,28 @@ def _pollinations_generate(messages: list, temperature: float) -> str:
                 raise ValueError("Empty response")
             if content.startswith("⚠️") or "being deprecated" in content:
                 raise ValueError("Pollinations returned deprecation notice instead of JSON")
-            # Unwrap {"role":"assistant","content":"..."} envelope if present
+            # Unwrap Pollinations envelope {"role","reasoning","content"} if present
             try:
                 import json as _json
+                import re as _re
                 wrapper = _json.loads(content)
-                if isinstance(wrapper, dict) and "content" in wrapper and "role" in wrapper:
-                    content = wrapper["content"]
-                    if isinstance(content, list):
-                        content = " ".join(c.get("text", "") if isinstance(c, dict) else str(c) for c in content)
+                if isinstance(wrapper, dict) and "role" in wrapper:
+                    # Try content field first
+                    inner = wrapper.get("content")
+                    if inner is None:
+                        # Fall back to reasoning field — extract JSON from it
+                        inner = wrapper.get("reasoning", "")
+                    if isinstance(inner, list):
+                        inner = " ".join(c.get("text", "") if isinstance(c, dict) else str(c) for c in inner)
+                    if isinstance(inner, str) and inner.strip():
+                        # Extract JSON code block if present
+                        block = _re.search(r"```(?:json)?\s*([\s\S]+?)\s*```", inner)
+                        if block:
+                            content = block.group(1).strip()
+                        else:
+                            # Find first { or [ and take from there
+                            m = _re.search(r"[{\[]", inner)
+                            content = inner[m.start():] if m else inner
             except Exception:
                 pass
             logger.info("Pollinations succeeded.")
