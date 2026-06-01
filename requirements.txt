@@ -8,3 +8,6 @@ google-auth-httplib2>=0.1.1
 google-auth-oauthlib>=1.1.0
 Pillow>=10.0.0
 python-dotenv>=1.0.0
+# Phase 4: beat-sync (optional — install separately if librosa is too heavy for CI)
+librosa>=0.10.0
+soundfile>=0.12.1

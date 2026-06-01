@@ -20,6 +20,12 @@ from typing import Any, Dict, List, Optional, Tuple
 
 from dotenv import load_dotenv
 
+try:
+    from beat_sync import get_beat_frames, snap_all_cuts, build_cut_frames
+    _BEAT_SYNC_AVAILABLE = True
+except ImportError:
+    _BEAT_SYNC_AVAILABLE = False
+
 load_dotenv()
 logging.basicConfig(
     level=logging.INFO,
@@ -265,12 +271,36 @@ def assemble_video(
     """
     channel_id = manifest.get("channel_id", "unknown")
     lines = manifest.get("lines", [])
+    channel_config = manifest.get("channel_config", {})
 
     output = Path(output_path)
     output.parent.mkdir(parents=True, exist_ok=True)
 
     temp_dir = Path("temp") / "assembly" / channel_id
     temp_dir.mkdir(parents=True, exist_ok=True)
+
+    # Beat-sync: snap cut frames to music beats when enabled
+    beat_sync_enabled = channel_config.get("beat_sync", True)
+    beat_frames: List[int] = []
+    if beat_sync_enabled and music_path and _BEAT_SYNC_AVAILABLE:
+        logger.info("[%s] Beat sync: analysing %s", channel_id, music_path)
+        beat_frames = get_beat_frames(music_path, fps=OUTPUT_FPS)
+        if beat_frames:
+            raw_cuts = build_cut_frames(lines, fps=OUTPUT_FPS)
+            snapped_cuts = snap_all_cuts(raw_cuts, beat_frames, tolerance=5)
+            # Patch duration_seconds for lines whose cut shifted
+            for i, (line, raw, snapped) in enumerate(zip(lines, raw_cuts, snapped_cuts)):
+                if snapped != raw and i + 1 < len(lines):
+                    # Adjust the *next* line's start by compensating this line's duration
+                    delta_frames = snapped - raw
+                    line["duration_seconds"] = max(
+                        0.5,
+                        line.get("duration_seconds", 3.0) + delta_frames / OUTPUT_FPS,
+                    )
+            logger.info(
+                "[%s] Beat sync: %d beats, %d cuts aligned",
+                channel_id, len(beat_frames), sum(1 for r, s in zip(raw_cuts, snapped_cuts) if r != s),
+            )
 
     # Build lookup maps
     mograph_map = {ln: p for ln, p in mograph_clips if p}
