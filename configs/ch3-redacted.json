@@ -34,5 +34,24 @@
   "forbidden_topics": ["election fraud", "anti-vax", "QAnon", "flat earth", "anything without primary sources"],
   "reference_channels": ["Adam Curtis", "Frontline", "Errol Morris"],
   "music_style": "Dark, cinematic, tense documentary score",
-  "b_roll_intensity": 70
+  "b_roll_intensity": 70,
+  "beat_sync": true,
+  "motion": {
+    "cameraDriftPct": 1.5,
+    "maxWordsOnScreen": 3,
+    "accentWarn": "#ff3333",
+    "glitchOnConcepts": true,
+    "glassCards": false,
+    "kenBurns": false
+  },
+  "tts": {
+    "provider": "edge"
+  },
+  "ai_images": {
+    "enabled": false,
+    "provider": "higgsfield",
+    "model": "higgsfield/diffusion-1",
+    "max_per_video": 2,
+    "_note": "CH3 prompt style: faux-dossier/redacted-document imagery, desaturated, government-file aesthetic"
+  }
 }

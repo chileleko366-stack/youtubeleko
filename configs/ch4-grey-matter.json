@@ -34,5 +34,24 @@
   "forbidden_topics": ["self-help platitudes", "MBTI-as-science", "evolutionary psych just-so stories", "pseudoscience"],
   "reference_channels": ["Hidden Brain", "Veritasium", "In Our Time"],
   "music_style": "Ambient, contemplative, scientific",
-  "b_roll_intensity": 60
+  "b_roll_intensity": 60,
+  "beat_sync": true,
+  "motion": {
+    "cameraDriftPct": 1.5,
+    "maxWordsOnScreen": 3,
+    "accentWarn": "#a78bfa",
+    "glitchOnConcepts": false,
+    "glassCards": true,
+    "kenBurns": false
+  },
+  "tts": {
+    "provider": "edge"
+  },
+  "ai_images": {
+    "enabled": false,
+    "provider": "higgsfield",
+    "model": "higgsfield/diffusion-1",
+    "max_per_video": 3,
+    "_note": "CH4 prompt style: labeled scientific diagram, neuroscience visual, clean purple palette"
+  }
 }

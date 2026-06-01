@@ -34,5 +34,24 @@
   "forbidden_topics": ["nationalist mythmaking", "imperial nostalgia", "romanticising slavery or colonialism", "contested-as-settled history"],
   "reference_channels": ["BBC Four", "Ken Burns", "David Olusoga"],
   "music_style": "Orchestral, documentary, reflective",
-  "b_roll_intensity": 80
+  "b_roll_intensity": 80,
+  "beat_sync": true,
+  "motion": {
+    "cameraDriftPct": 3,
+    "maxWordsOnScreen": 3,
+    "accentWarn": "#e8b84b",
+    "glitchOnConcepts": false,
+    "glassCards": false,
+    "kenBurns": true
+  },
+  "tts": {
+    "provider": "edge"
+  },
+  "ai_images": {
+    "enabled": false,
+    "provider": "higgsfield",
+    "model": "higgsfield/diffusion-1",
+    "max_per_video": 4,
+    "_note": "CH5 prompt style: historical-style still photograph, archival/sepia tone, museum-quality imagery"
+  }
 }

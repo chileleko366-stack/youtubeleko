@@ -34,5 +34,24 @@
   "forbidden_topics": ["specific investment advice", "get-rich-quick schemes", "crypto gambling"],
   "reference_channels": ["Andrei Jikh", "Graham Stephan", "Bloomberg"],
   "music_style": "Clean, modern, subtle background",
-  "b_roll_intensity": 50
+  "b_roll_intensity": 50,
+  "beat_sync": true,
+  "motion": {
+    "cameraDriftPct": 2,
+    "maxWordsOnScreen": 3,
+    "accentWarn": "#ff6b35",
+    "glitchOnConcepts": true,
+    "glassCards": true,
+    "kenBurns": false
+  },
+  "tts": {
+    "provider": "edge"
+  },
+  "ai_images": {
+    "enabled": false,
+    "provider": "higgsfield",
+    "model": "higgsfield/diffusion-1",
+    "max_per_video": 3,
+    "_note": "CH2 prompt style: wealth/financial illusion imagery, clean teal palette"
+  }
 }

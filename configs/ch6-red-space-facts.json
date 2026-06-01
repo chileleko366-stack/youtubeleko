@@ -80,5 +80,24 @@
   "reference_channels": ["Kurzgesagt", "Veritasium", "PBS Space Time", "SciShow Space"],
   "music_style": "Cinematic orchestral, Hans Zimmer-esque, space ambience",
   "b_roll_intensity": 60,
+  "beat_sync": true,
+  "motion": {
+    "cameraDriftPct": 2,
+    "maxWordsOnScreen": 3,
+    "accentWarn": "#ff6b35",
+    "glitchOnConcepts": false,
+    "glassCards": false,
+    "kenBurns": false
+  },
+  "tts": {
+    "provider": "edge"
+  },
+  "ai_images": {
+    "enabled": false,
+    "provider": "higgsfield",
+    "model": "higgsfield/diffusion-1",
+    "max_per_video": 2,
+    "_note": "CH6 already strong — Space* compositions are the reference. AI images OFF."
+  },
   "youtube_channel_id": "YOUTUBE_CHANNEL_ID_CH6"
 }
