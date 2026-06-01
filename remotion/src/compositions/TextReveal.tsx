@@ -11,6 +11,8 @@ import { LightLeak } from "../lib/lightLeak";
 import { ParticleField } from "../lib/particles";
 import { Scanlines } from "../lib/scanlines";
 import { easeOutExpo, easeOutElastic } from "../lib/easing";
+import { CameraRig } from "../lib/camera";
+import { ParallaxLayer } from "../lib/parallax";
 
 const WORD_ANIM_FRAMES = 12;
 const SCALE_ANIM_FRAMES = 18;
@@ -73,26 +75,6 @@ export const TextReveal: React.FC<CompositionProps> = ({
 
   const isVertical = height > width;
 
-  // Camera drift — slow zoom + gentle pan
-  const driftScale = interpolate(
-    frame,
-    [0, durationInFrames],
-    [1.0, 1.02],
-    { extrapolateRight: "clamp", extrapolateLeft: "clamp" }
-  );
-  const driftX = interpolate(
-    frame,
-    [0, durationInFrames],
-    [0, 6],
-    { extrapolateRight: "clamp", extrapolateLeft: "clamp" }
-  );
-  const driftY = interpolate(
-    frame,
-    [0, durationInFrames],
-    [0, -4],
-    { extrapolateRight: "clamp", extrapolateLeft: "clamp" }
-  );
-
   // Accent line entrance
   const lineT = clamp01(frame / 10);
   const lineWidthEased = interpolate(easeOutExpo(lineT), [0, 1], [0, 100]);
@@ -105,23 +87,19 @@ export const TextReveal: React.FC<CompositionProps> = ({
         animate
       />
 
-      <ParticleField
-        count={20}
-        color={brandColor}
-        opacity={0.15}
-        speed={0.6}
-        size={[1, 2]}
-      />
+      {/* Background parallax layer */}
+      <ParallaxLayer depth={3}>
+        <ParticleField
+          count={20}
+          color={brandColor}
+          opacity={0.15}
+          speed={0.6}
+          size={[1, 2]}
+        />
+      </ParallaxLayer>
 
-      {/* Camera drift wrapper */}
-      <div
-        style={{
-          position: "absolute",
-          inset: 0,
-          transform: `scale(${driftScale}) translate(${driftX}px, ${driftY}px)`,
-          transformOrigin: "50% 50%",
-        }}
-      >
+      {/* Midground: accent lines + text (camera drift applied here) */}
+      <CameraRig driftPct={2}>
         {/* Top accent line */}
         <div
           style={{
@@ -251,7 +229,7 @@ export const TextReveal: React.FC<CompositionProps> = ({
             boxShadow: `0 0 12px ${brandColor}77`,
           }}
         />
-      </div>
+      </CameraRig>
 
       <LightLeak opacity={0.07} />
       <Scanlines enabled opacity={0.04} />

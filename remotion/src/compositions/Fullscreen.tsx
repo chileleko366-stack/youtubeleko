@@ -13,6 +13,7 @@ import { LightLeak } from "../lib/lightLeak";
 import { ParticleField } from "../lib/particles";
 import { Scanlines } from "../lib/scanlines";
 import { easeOutBack } from "../lib/easing";
+import { CameraRig } from "../lib/camera";
 
 export const Fullscreen: React.FC<CompositionProps> = ({
   text,
@@ -49,6 +50,7 @@ export const Fullscreen: React.FC<CompositionProps> = ({
 
       <ParticleField count={60} color={brandColor} opacity={0.25} speed={0.7} size={[1, 3]} />
 
+      <CameraRig driftPct={2.5}>
       {/* Abstract background circle */}
       <div
         style={{
@@ -110,6 +112,7 @@ export const Fullscreen: React.FC<CompositionProps> = ({
           />
         </div>
       </div>
+      </CameraRig>
 
       <LightLeak opacity={0.08} />
       <Scanlines enabled opacity={0.03} />

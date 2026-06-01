@@ -10,6 +10,8 @@ import type { CompositionProps } from "../Root";
 import { GradientBg } from "../lib/gradientBg";
 import { LightLeak } from "../lib/lightLeak";
 import { easeOutElastic } from "../lib/easing";
+import { CameraRig } from "../lib/camera";
+import { GlassCard } from "../lib/glassCard";
 
 export const BulletList: React.FC<CompositionProps> = ({
   text,
@@ -53,6 +55,7 @@ export const BulletList: React.FC<CompositionProps> = ({
         animate
       />
 
+      <CameraRig driftPct={1.5}>
       {/* Vertical accent line growing from top */}
       <div
         style={{
@@ -154,6 +157,7 @@ export const BulletList: React.FC<CompositionProps> = ({
           );
         })}
       </div>
+      </CameraRig>
 
       <LightLeak opacity={0.05} />
     </AbsoluteFill>

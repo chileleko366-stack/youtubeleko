@@ -10,6 +10,7 @@ import type { CompositionProps } from "../Root";
 import { GradientBg } from "../lib/gradientBg";
 import { LightLeak } from "../lib/lightLeak";
 import { easeOutElastic } from "../lib/easing";
+import { CameraRig } from "../lib/camera";
 
 export const Timeline: React.FC<CompositionProps> = ({
   text,
@@ -39,6 +40,7 @@ export const Timeline: React.FC<CompositionProps> = ({
         animate
       />
 
+      <CameraRig driftPct={1.5}>
       <div
         style={{
           position: "absolute",
@@ -168,6 +170,7 @@ export const Timeline: React.FC<CompositionProps> = ({
           </div>
         </div>
       </div>
+      </CameraRig>
 
       <LightLeak opacity={0.06} />
     </AbsoluteFill>

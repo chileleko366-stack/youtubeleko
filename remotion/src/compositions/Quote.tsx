@@ -11,6 +11,8 @@ import { GradientBg } from "../lib/gradientBg";
 import { ParticleField } from "../lib/particles";
 import { LightLeak } from "../lib/lightLeak";
 import { easeOutBack, easeOutExpo } from "../lib/easing";
+import { CameraRig } from "../lib/camera";
+import { GlassCard } from "../lib/glassCard";
 
 export const Quote: React.FC<CompositionProps> = ({
   text,
@@ -68,6 +70,7 @@ export const Quote: React.FC<CompositionProps> = ({
 
       <ParticleField count={30} color={brandColor} opacity={0.12} speed={0.4} size={[1, 2]} />
 
+      <CameraRig driftPct={1.5}>
       <div
         style={{
           position: "absolute",
@@ -169,6 +172,7 @@ export const Quote: React.FC<CompositionProps> = ({
           </div>
         </div>
       </div>
+      </CameraRig>
 
       <LightLeak opacity={0.06} />
     </AbsoluteFill>

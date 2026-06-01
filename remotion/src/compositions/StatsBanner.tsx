@@ -12,6 +12,8 @@ import { GlowText } from "../lib/glowText";
 import { LightLeak } from "../lib/lightLeak";
 import { ParticleField } from "../lib/particles";
 import { easeOutExpo, easeOutElastic } from "../lib/easing";
+import { CameraRig } from "../lib/camera";
+import { GlassCard } from "../lib/glassCard";
 
 export const StatsBanner: React.FC<CompositionProps> = ({
   text,
@@ -89,6 +91,7 @@ export const StatsBanner: React.FC<CompositionProps> = ({
 
       <ParticleField count={30} color={brandColor} opacity={0.15} speed={0.5} size={[1, 2]} />
 
+      <CameraRig driftPct={2}>
       {/* Top bar */}
       <div
         style={{
@@ -175,12 +178,15 @@ export const StatsBanner: React.FC<CompositionProps> = ({
           </div>
         )}
 
-        {/* Units / label */}
-        <div
+        {/* Units / label wrapped in glass card */}
+        <GlassCard
+          brandColor={brandColor}
+          padding="24px 60px"
           style={{
             opacity: unitsOpacity,
             transform: `translateY(${unitsY}px)`,
             textAlign: "center",
+            maxWidth: 1100,
           }}
         >
           <p
@@ -190,14 +196,12 @@ export const StatsBanner: React.FC<CompositionProps> = ({
               color: "#ffffff",
               margin: 0,
               textAlign: "center",
-              maxWidth: 1200,
               lineHeight: 1.4,
-              padding: "0 80px",
             }}
           >
             {text}
           </p>
-        </div>
+        </GlassCard>
       </div>
 
       {/* Bottom bar */}
@@ -213,6 +217,7 @@ export const StatsBanner: React.FC<CompositionProps> = ({
           borderRadius: 2,
         }}
       />
+      </CameraRig>
 
       <LightLeak opacity={0.06} />
     </AbsoluteFill>

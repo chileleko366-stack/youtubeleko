@@ -11,6 +11,7 @@ import { GradientBg } from "../lib/gradientBg";
 import { GlowText } from "../lib/glowText";
 import { LightLeak } from "../lib/lightLeak";
 import { easeOutBack } from "../lib/easing";
+import { CameraRig } from "../lib/camera";
 
 export const CelebrityCard: React.FC<CompositionProps> = ({
   text,
@@ -60,6 +61,7 @@ export const CelebrityCard: React.FC<CompositionProps> = ({
         animate
       />
 
+      <CameraRig driftPct={1.5}>
       <div
         style={{
           position: "absolute",
@@ -168,6 +170,7 @@ export const CelebrityCard: React.FC<CompositionProps> = ({
           </p>
         </div>
       </div>
+      </CameraRig>
 
       <LightLeak opacity={0.07} />
     </AbsoluteFill>
