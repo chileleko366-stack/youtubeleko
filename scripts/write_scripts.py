@@ -455,6 +455,124 @@ No extra text."""
 
 
 # ---------------------------------------------------------------------------
+# Stage 5.5 – Visual Spec (intent enrichment, free — uses existing AI client)
+# ---------------------------------------------------------------------------
+
+_VISUAL_SPEC_SCHEMA = """{
+  "intent": "<stat|proportion|quote|concept|comparison|timeline|list|reveal|kinetic>",
+  "data": {
+    "value": <number or null>,
+    "unit": "<string or null>",
+    "total": <number or null>,
+    "iconCount": <integer 1-10 or null>,
+    "highlightCount": <integer or null>
+  },
+  "kineticWords": ["word1", "word2"],
+  "highlightWords": ["word1"],
+  "sfxCueFrame": <integer frame number or null>
+}"""
+
+
+def stage_5_5_visual_spec(
+    lines: List[Dict[str, Any]], channel_config: Dict[str, Any]
+) -> List[Dict[str, Any]]:
+    """
+    Stage 5.5 — Visual intent enrichment.
+
+    For each line, emits a structured visualSpec JSON that Remotion compositions
+    can consume to choose richer visual treatments (icon grids, count-up numbers,
+    highlight bursts, etc.).  Uses the existing AI client (Claude primary →
+    Gemini fallback) — no new API or cost.
+
+    Results are added as line["visualSpec"]. Degrades gracefully: if the LLM
+    batch fails, the field is omitted and compositions fall back to text-only.
+    """
+    client = get_client()
+    name = channel_config["channel_name"]
+    channel_id = channel_config["_channel_id"]
+
+    system = (
+        f"You are the visual director for '{name}'. "
+        "For each script line, output a compact JSON visual specification "
+        "that tells the motion-graphics renderer how to visualise the content. "
+        "Be precise — only include data fields that are genuinely present in the text."
+    )
+
+    slim_lines = [
+        {"line_number": ln["line_number"], "text": ln["text"], "treatment": ln.get("treatment", "")}
+        for ln in lines
+    ]
+
+    spec_map: Dict[int, Dict] = {}
+    for i in range(0, len(slim_lines), BATCH_SIZE):
+        batch = slim_lines[i : i + BATCH_SIZE]
+        if i > 0:
+            time.sleep(2)
+        batch_json = json.dumps(batch, indent=2)
+        prompt = f"""For each line, output a visual specification JSON.
+
+Lines:
+{batch_json}
+
+Intent options:
+- "stat"       — a specific number/statistic to count-up or display large
+- "proportion" — X out of Y, or X%, best shown as icon-grid or fill-bar
+- "quote"      — direct spoken quote needing quotation marks
+- "concept"    — abstract idea, best with kinetic words + animated diagram
+- "comparison" — two sides contrasted (vs / SplitScreen)
+- "timeline"   — events ordered in time
+- "list"       — enumerated points (BulletList)
+- "reveal"     — dramatic reveal of information
+- "kinetic"    — general kinetic text, no specific visualisation
+
+Rules:
+- kineticWords: 1-3 words that should flash large (the "impact" words)
+- highlightWords: words that should render in the channel's accent/warning colour
+- sfxCueFrame: if the line has a specific impact moment, the frame number (at 30fps)
+  based on where in the line the data lands (roughly); null otherwise
+- data.iconCount: for proportion intent, total icons to show (max 10)
+- data.highlightCount: for proportion, how many to highlight
+
+Return ONLY a valid JSON array — one object per line:
+{{"line_number": <int>, "visualSpec": {_VISUAL_SPEC_SCHEMA}}}
+
+No extra text."""
+
+        batch_label = f"stage_5_5_batch_{i // BATCH_SIZE + 1}"
+        try:
+            batch_results = _call_json_stage(
+                batch_label,
+                channel_id,
+                lambda p=prompt: client.generate(
+                    prompt=p, system_prompt=system, max_tokens=1200, temperature=0.3
+                ),
+            )
+            for item in batch_results:
+                spec = item.get("visualSpec")
+                if isinstance(spec, dict):
+                    spec_map[item["line_number"]] = spec
+        except Exception as exc:  # pylint: disable=broad-except
+            # Non-fatal: Stage 5.5 enrichment is best-effort
+            logger.warning(
+                "[%s] Stage 5.5 batch %d failed (non-fatal): %s",
+                channel_id, i // BATCH_SIZE + 1, exc,
+            )
+
+    for line in lines:
+        ln = line.get("line_number")
+        spec = spec_map.get(ln)
+        if spec:
+            line["visualSpec"] = spec
+
+    found = sum(1 for ln in lines if "visualSpec" in ln)
+    logger.info(
+        "[%s] Stage 5.5 complete: %d/%d lines have visualSpec",
+        channel_id, found, len(lines),
+    )
+    return lines
+
+
+# ---------------------------------------------------------------------------
 # Stage 6 – B-Roll Keywords
 # ---------------------------------------------------------------------------
 
@@ -597,6 +715,10 @@ def generate_complete_manifest(
     lines = stage_5_visual_treatments(lines, channel_config)
     time.sleep(3)
 
+    logger.info("[%s] Stage 5.5 – Visual spec enrichment", channel_id)
+    lines = stage_5_5_visual_spec(lines, channel_config)
+    time.sleep(2)
+
     logger.info("[%s] Stage 6 – B-roll keywords", channel_id)
     lines = stage_6_b_roll_keywords(lines, channel_config)
     time.sleep(3)
@@ -618,7 +740,7 @@ def generate_complete_manifest(
         "channel_config": channel_config,
         "total_duration_seconds": round(total_duration, 1),
         "total_lines": len(lines),
-        "pipeline_version": "1.0.0",
+        "pipeline_version": "2.0.0",
     }
     logger.info(
         "[%s] Manifest complete – %d lines, %.0fs total",

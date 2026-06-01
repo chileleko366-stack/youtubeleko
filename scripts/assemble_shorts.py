@@ -337,6 +337,17 @@ def build_mograph_props(
         "channelId": manifest.get("channel_id", ""),
         "aspectRatio": "9:16",
     }
+
+    # Pass Stage 5.5 visual spec when present (compositions degrade gracefully when absent)
+    visual_spec = line.get("visualSpec")
+    if visual_spec:
+        props["visualSpec"] = visual_spec
+
+    # Pass highlight/kinetic words from visual spec to compositions
+    highlight_words = (visual_spec or {}).get("highlightWords", [])
+    kinetic_words = (visual_spec or {}).get("kineticWords", [])
+    if highlight_words or kinetic_words:
+        props["highlightWords"] = highlight_words + kinetic_words
     return composition, props
 
 
