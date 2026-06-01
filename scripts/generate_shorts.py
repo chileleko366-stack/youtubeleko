@@ -177,6 +177,10 @@ Return JSON only:
         if isinstance(inner, str):
             script_data = json.loads(repair_json(inner))
 
+    # LLM returned the lines array directly instead of {"lines": [...]}
+    if isinstance(script_data, list):
+        script_data = {"lines": script_data}
+
     # Retry once if no lines
     raw_lines = script_data.get("lines", [])
     if not raw_lines:
@@ -186,6 +190,8 @@ Return JSON only:
         if isinstance(script_data2, dict) and "role" in script_data2 and "content" in script_data2:
             inner = script_data2.get("content", "")
             script_data2 = json.loads(repair_json(inner)) if isinstance(inner, str) else script_data2
+        if isinstance(script_data2, list):
+            script_data2 = {"lines": script_data2}
         raw_lines = script_data2.get("lines", [])
         if not raw_lines:
             raise RuntimeError(f"[{channel_id}] LLM returned no lines after retry. Raw: {script_raw2[:300]}")
