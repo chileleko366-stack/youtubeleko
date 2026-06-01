@@ -59,7 +59,7 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
         with:
-          ref: claude/great-rubin-EPNah
+          ref: claude/festive-mendel-3VlkH
 
       - name: Set up Python 3.11
         uses: actions/setup-python@v5
@@ -168,7 +168,7 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
         with:
-          ref: claude/great-rubin-EPNah
+          ref: claude/festive-mendel-3VlkH
 
       - name: Set up Python 3.11
         uses: actions/setup-python@v5
@@ -279,7 +279,7 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
         with:
-          ref: claude/great-rubin-EPNah
+          ref: claude/festive-mendel-3VlkH
 
       - name: Set up Python 3.11
         uses: actions/setup-python@v5
@@ -396,7 +396,7 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
         with:
-          ref: claude/great-rubin-EPNah
+          ref: claude/festive-mendel-3VlkH
 
       - name: Set up Python 3.11
         uses: actions/setup-python@v5

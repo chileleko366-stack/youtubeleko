@@ -163,7 +163,7 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
         with:
-          ref: claude/great-rubin-EPNah
+          ref: claude/festive-mendel-3VlkH
 
       - name: Set up Python 3.11
         uses: actions/setup-python@v5
@@ -276,7 +276,7 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
         with:
-          ref: claude/great-rubin-EPNah
+          ref: claude/festive-mendel-3VlkH
 
       - name: Set up Python 3.11
         uses: actions/setup-python@v5
@@ -365,7 +365,7 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
         with:
-          ref: claude/great-rubin-EPNah
+          ref: claude/festive-mendel-3VlkH
 
       - name: Set up Python 3.11
         uses: actions/setup-python@v5
@@ -745,7 +745,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: claude/great-rubin-EPNah
+          ref: claude/festive-mendel-3VlkH
       - uses: actions/setup-python@v5
         with: { python-version: "3.11", cache: pip }
       - name: Install system deps (FFmpeg + fonts)
@@ -895,7 +895,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: claude/great-rubin-EPNah
+          ref: claude/festive-mendel-3VlkH
       - uses: actions/setup-python@v5
         with: { python-version: "3.11", cache: pip }
       - name: Install system deps (FFmpeg + fonts)
@@ -1040,7 +1040,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: claude/great-rubin-EPNah
+          ref: claude/festive-mendel-3VlkH
       - uses: actions/setup-python@v5
         with: { python-version: "3.11", cache: pip }
       - name: Install system deps (FFmpeg + fonts)
@@ -1185,7 +1185,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: claude/great-rubin-EPNah
+          ref: claude/festive-mendel-3VlkH
       - uses: actions/setup-python@v5
         with: { python-version: "3.11", cache: pip }
       - name: Install system deps (FFmpeg + fonts)
@@ -1330,7 +1330,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: claude/great-rubin-EPNah
+          ref: claude/festive-mendel-3VlkH
       - uses: actions/setup-python@v5
         with: { python-version: "3.11", cache: pip }
       - name: Install system deps (FFmpeg + fonts)
@@ -1487,7 +1487,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: claude/great-rubin-EPNah
+          ref: claude/festive-mendel-3VlkH
       - uses: actions/setup-python@v5
         with: { python-version: "3.11", cache: pip }
       - run: pip install -r requirements.txt
