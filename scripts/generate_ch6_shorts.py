@@ -249,6 +249,10 @@ No markdown. No explanation. Just the JSON object."""
             text = " ".join(c.get("text", "") if isinstance(c, dict) else str(c) for c in inner)
             manifest_core = _parse_json(text)
 
+    # LLM returned bare lines array instead of {"lines": [...]}
+    if isinstance(manifest_core, list):
+        manifest_core = {"lines": manifest_core}
+
     # Validate lines — retry once if empty
     lines = manifest_core.get("lines", [])
     if not lines:
@@ -259,6 +263,8 @@ No markdown. No explanation. Just the JSON object."""
         if isinstance(manifest_core, dict) and "role" in manifest_core and "content" in manifest_core:
             inner = manifest_core.get("content", "")
             manifest_core = _parse_json(inner) if isinstance(inner, str) else manifest_core
+        if isinstance(manifest_core, list):
+            manifest_core = {"lines": manifest_core}
         lines = manifest_core.get("lines", [])
         if not lines:
             raise ValueError(
