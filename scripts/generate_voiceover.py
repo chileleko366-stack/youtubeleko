@@ -1,13 +1,31 @@
 """
-Voiceover generator using edge-tts (Microsoft TTS, free, unlimited).
+Voiceover generator.
 
-Generates per-line audio files from the manifest's line breakdown,
-respecting each channel's voice, speed, and pitch settings.
+Primary: edge-tts (Microsoft Neural TTS, free, unlimited).
+Optional: pluggable paid provider via channel config tts.provider (never enabled
+by default).  edge-tts always remains the guaranteed free fallback.
+
+SSML-style prosody improvements applied to edge-tts output:
+- Pause markers (commas, periods, [PAUSE]) converted to SSML breaks.
+- Hook lines get a slight rate lift (+3%) for energy.
+- Highlight words from Stage 5.5 visualSpec get <emphasis> tags where supported.
+
+Optional paid TTS config (OFF by default, never called unless flag is true):
+  "tts": {
+    "provider": "edge",           // "edge" = free default
+    "voice": "en-US-GuyNeural",
+    "rate": "+0%",
+    "pitch": "+0Hz"
+  }
+
+Credit cost note: edge-tts = $0. Any paid provider (e.g. ElevenLabs, Play.ht)
+would cost per-character — see provider docs for pricing.
 """
 
 import asyncio
 import logging
 import os
+import re
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -59,6 +77,45 @@ CHANNEL_VOICE_SETTINGS: Dict[str, Dict[str, Any]] = {
 }
 
 
+def _apply_ssml_prosody(text: str, highlight_words: Optional[List[str]] = None) -> str:
+    """
+    Inject SSML prosody into plain text before sending to edge-tts.
+
+    edge-tts accepts a subset of SSML.  We add:
+    - <break> tags at commas, semicolons, dashes, and [PAUSE] markers.
+    - <emphasis> on highlight words (where edge-tts supports it).
+    - Sentences keep their natural pauses; no structural changes to meaning.
+
+    Returns the enriched SSML string (edge-tts handles the <speak> wrapper).
+    """
+    # Convert [PAUSE] marker to an explicit break
+    text = re.sub(r"\[PAUSE\]", '<break time="600ms"/>', text, flags=re.IGNORECASE)
+
+    # Em-dash / en-dash → short break
+    text = re.sub(r"\s*[—–]\s*", ' <break time="300ms"/> ', text)
+
+    # Comma → very short break
+    text = re.sub(r",\s*", ', <break time="100ms"/> ', text)
+
+    # Emphasize highlight words if provided
+    if highlight_words:
+        for word in highlight_words:
+            escaped = re.escape(word)
+            text = re.sub(
+                rf"\b({escaped})\b",
+                r'<emphasis level="strong">\1</emphasis>',
+                text,
+                flags=re.IGNORECASE,
+            )
+
+    return text
+
+
+def _is_hook_line(line: Dict[str, Any]) -> bool:
+    """Heuristic: first few lines are likely hook lines and get a rate boost."""
+    return line.get("line_number", 99) <= 2
+
+
 def get_voice_for_channel(channel_config: Dict[str, Any]) -> Dict[str, Any]:
     """
     Extract voice settings from channel config, falling back to defaults.
@@ -73,10 +130,13 @@ def get_voice_for_channel(channel_config: Dict[str, Any]) -> Dict[str, Any]:
         "narrator_mode": True,
     })
 
-    # Config-level overrides take precedence
-    voice = channel_config.get("tts_voice") or defaults["voice"]
-    rate = channel_config.get("tts_rate") or defaults["rate"]
-    pitch = channel_config.get("tts_pitch") or defaults["pitch"]
+    # Config-level overrides take precedence (new "tts" block > legacy flat keys)
+    tts_block = channel_config.get("tts", {})
+    provider = tts_block.get("provider", "edge")  # always default to free edge-tts
+
+    voice = tts_block.get("voice") or channel_config.get("tts_voice") or defaults["voice"]
+    rate = tts_block.get("rate") or channel_config.get("tts_rate") or defaults["rate"]
+    pitch = tts_block.get("pitch") or channel_config.get("tts_pitch") or defaults["pitch"]
     narrator_mode = channel_config.get("narrator_mode", defaults["narrator_mode"])
 
     return {
@@ -84,6 +144,7 @@ def get_voice_for_channel(channel_config: Dict[str, Any]) -> Dict[str, Any]:
         "rate": rate,
         "pitch": pitch,
         "narrator_mode": narrator_mode,
+        "provider": provider,
     }
 
 
@@ -135,6 +196,50 @@ async def generate_voiceover(
         return False
 
 
+async def generate_voiceover_with_prosody(
+    line: Dict[str, Any],
+    voice: str,
+    rate: str,
+    pitch: str,
+    output_path: str,
+) -> bool:
+    """
+    Generate TTS with SSML prosody improvements applied.
+
+    Applies:
+    - [PAUSE] → <break> tags
+    - Comma / dash → short breaks
+    - Hook lines (line_number <= 2) get +3% rate boost for energy
+    - Highlight words from visualSpec get <emphasis> where supported
+    """
+    text = line.get("text", "").strip()
+    if not text:
+        return False
+
+    visual_spec = line.get("visualSpec") or {}
+    highlight_words = visual_spec.get("highlightWords", []) + visual_spec.get("kineticWords", [])
+    enriched = _apply_ssml_prosody(text, highlight_words or None)
+
+    # Hook line rate boost
+    final_rate = rate
+    if _is_hook_line(line):
+        # Parse "+0%" or "-5%" and add 3%
+        rate_match = re.match(r"([+-]?)(\d+)%", rate)
+        if rate_match:
+            sign = rate_match.group(1) or "+"
+            val = int(rate_match.group(2))
+            boosted = val + (3 if sign == "+" else -3 + 3)
+            final_rate = f"+{boosted}%" if boosted >= 0 else f"{boosted}%"
+
+    return await generate_voiceover(
+        script_text=enriched,
+        voice=voice,
+        rate=final_rate,
+        pitch=pitch,
+        output_path=output_path,
+    )
+
+
 async def _generate_line_voiceover(
     line: Dict[str, Any],
     voice_settings: Dict[str, Any],
@@ -151,8 +256,9 @@ async def _generate_line_voiceover(
         return (line_number, None)
 
     output_path = str(base_dir / f"line_{line_number:04d}.mp3")
-    success = await generate_voiceover(
-        script_text=text,
+    # Use SSML prosody-enhanced version for more human-sounding output
+    success = await generate_voiceover_with_prosody(
+        line=line,
         voice=voice_settings["voice"],
         rate=voice_settings["rate"],
         pitch=voice_settings["pitch"],
