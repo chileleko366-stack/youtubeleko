@@ -49,6 +49,44 @@ CHANNEL_CONFIG_FILES = {
 
 BATCH_SIZE = 20  # lines per LLM call in stages 5 and 6
 
+
+def _infer_treatment(text: str) -> str:
+    """
+    Content-aware treatment heuristic.  Used when the LLM batch fails or returns
+    an unrecognised composition name so we never silently fall back to a static
+    text card for data-rich or structurally significant lines.
+    """
+    t = text.lower()
+    # Percentage or large number → stat visualisation
+    if re.search(r"\b\d+\.?\d*\s*%", t):
+        return "StatsBanner"
+    if re.search(
+        r"\b\d[\d,\.]+\s*(?:million|billion|trillion|thousand|k\b|m\b|b\b)", t
+    ):
+        return "StatsBanner"
+    # Currency or ratio ("3 out of 10", "$40,000")
+    if re.search(r"[\$€£¥]\s*\d", t) or re.search(
+        r"\b\d+\s+(?:out\s+of|in|per)\s+\d+\b", t
+    ):
+        return "DataViz"
+    # Direct quote (opens with a quotation mark)
+    if re.match(r'^["""\'']', text.strip()):
+        return "Quote"
+    # Comparison / contrast keywords
+    if re.search(
+        r"\b(?:vs\.?|versus|compared\s+to|unlike|while|whereas|however|but)\b", t
+    ):
+        return "SplitScreen"
+    # Date / year range → timeline
+    years = re.findall(r"\b(?:1[5-9]|20)\d{2}\b", t)
+    if len(years) >= 2 or re.search(r"\bin\s+(?:1[5-9]|20)\d{2}\b", t):
+        return "Timeline"
+    # List-like lines
+    if text.count(",") >= 2 or ";" in text or re.search(r"\:\s*\w", text):
+        return "BulletList"
+    # Safe default: kinetic TextReveal (now fixed)
+    return "TextReveal"
+
 TREATMENT_OPTIONS = [
     "TextReveal",
     "SplitScreen",
@@ -388,7 +426,17 @@ No extra text."""
             lambda p=prompt: client.generate(prompt=p, system_prompt=system, max_tokens=600, temperature=0.4),
         )
         for item in batch_results:
-            treatment_map[item["line_number"]] = item.get("treatment", "TextReveal")
+            raw_treatment = item.get("treatment", "")
+            # Validate: only accept known compositions; run heuristic otherwise
+            if raw_treatment in TREATMENT_OPTIONS:
+                treatment_map[item["line_number"]] = raw_treatment
+            else:
+                # Find the line text so the heuristic can inspect it
+                line_text = next(
+                    (sl["text"] for sl in slim_lines if sl["line_number"] == item["line_number"]),
+                    "",
+                )
+                treatment_map[item["line_number"]] = _infer_treatment(line_text)
 
     # Merge treatment + static brand fields back into the full line objects
     static_fields = {
@@ -399,7 +447,9 @@ No extra text."""
     }
     for line in lines:
         ln = line.get("line_number")
-        line["treatment"] = treatment_map.get(ln, "TextReveal")
+        # Use heuristic when LLM had no result for this line
+        assigned = treatment_map.get(ln)
+        line["treatment"] = assigned if assigned else _infer_treatment(line.get("text", ""))
         line.update(static_fields)
     return lines
 

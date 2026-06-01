@@ -10,7 +10,7 @@ import type { CompositionProps } from "../Root";
 import { GradientBg } from "../lib/gradientBg";
 import { ParticleField } from "../lib/particles";
 import { LightLeak } from "../lib/lightLeak";
-import { easeOutBack } from "../lib/easing";
+import { easeOutBack, easeOutExpo } from "../lib/easing";
 
 export const Quote: React.FC<CompositionProps> = ({
   text,
@@ -116,13 +116,14 @@ export const Quote: React.FC<CompositionProps> = ({
                 fps,
                 config: { damping: 20, stiffness: 140 },
               });
+              const wT = Math.min(wSpring, 1);
               return (
                 <span
                   key={i}
                   style={{
                     display: "inline-block",
-                    opacity: interpolate(wSpring, [0, 1], [0, 1]),
-                    transform: `translateY(${interpolate(wSpring, [0, 1], [16, 0])}px)`,
+                    opacity: easeOutExpo(wT),
+                    transform: `translateY(${interpolate(easeOutExpo(wT), [0, 1], [16, 0])}px)`,
                   }}
                 >
                   {word}

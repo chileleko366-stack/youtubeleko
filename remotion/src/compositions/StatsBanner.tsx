@@ -11,6 +11,7 @@ import { GradientBg } from "../lib/gradientBg";
 import { GlowText } from "../lib/glowText";
 import { LightLeak } from "../lib/lightLeak";
 import { ParticleField } from "../lib/particles";
+import { easeOutExpo, easeOutElastic } from "../lib/easing";
 
 export const StatsBanner: React.FC<CompositionProps> = ({
   text,
@@ -35,9 +36,14 @@ export const StatsBanner: React.FC<CompositionProps> = ({
     config: { damping: 22, stiffness: 100 },
   });
 
-  const bannerWidth = interpolate(bannerProgress, [0, 1], [0, 100]);
-  const statScale = interpolate(statProgress, [0, 1], [0.5, 1]);
-  const statOpacity = interpolate(statProgress, [0, 1], [0, 1]);
+  // easeOutExpo for fast snap-in on the banner line
+  const bannerT = Math.min(bannerProgress, 1);
+  const bannerWidth = interpolate(easeOutExpo(bannerT), [0, 1], [0, 100]);
+
+  // easeOutElastic impact pop on the stat value (scale 1.1 → 1.0)
+  const statT = Math.min(statProgress, 1);
+  const statScale = 1.1 - 0.1 * easeOutElastic(statT);
+  const statOpacity = interpolate(statProgress, [0, 0.4], [0, 1], { extrapolateRight: "clamp" });
   const unitsOpacity = interpolate(unitsProgress, [0, 1], [0, 1]);
   const unitsY = interpolate(unitsProgress, [0, 1], [20, 0]);
 

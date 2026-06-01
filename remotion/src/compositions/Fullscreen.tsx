@@ -12,6 +12,7 @@ import { GlowText } from "../lib/glowText";
 import { LightLeak } from "../lib/lightLeak";
 import { ParticleField } from "../lib/particles";
 import { Scanlines } from "../lib/scanlines";
+import { easeOutBack } from "../lib/easing";
 
 export const Fullscreen: React.FC<CompositionProps> = ({
   text,
@@ -22,7 +23,7 @@ export const Fullscreen: React.FC<CompositionProps> = ({
   const frame = useCurrentFrame();
   const { fps, durationInFrames } = useVideoConfig();
 
-  const enter = spring({ frame, fps, config: { damping: 22, stiffness: 90 } });
+  const enter = spring({ frame, fps, config: { damping: 14, stiffness: 220, mass: 0.6 } });
   const exitFrame = durationInFrames - 15;
   const exit = interpolate(frame, [exitFrame, durationInFrames], [1, 0], {
     extrapolateLeft: "clamp",
@@ -30,7 +31,9 @@ export const Fullscreen: React.FC<CompositionProps> = ({
   });
 
   const opacity = Math.min(enter, exit);
-  const scale = interpolate(enter, [0, 1], [0.85, 1]);
+  // easeOutBack for an overshoot pop on entry (scale 0.85 → 1.05 → 1.0)
+  const enterT = Math.min(enter, 1);
+  const scale = interpolate(easeOutBack(enterT), [0, 1], [0.85, 1]);
 
   // Abstract circle behind text — slowly scales up
   const circleScale = interpolate(frame, [0, durationInFrames], [1, 1.18]);

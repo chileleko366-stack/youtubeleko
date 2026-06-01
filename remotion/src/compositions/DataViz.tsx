@@ -10,6 +10,7 @@ import {
 import type { CompositionProps } from "../Root";
 import { GradientBg } from "../lib/gradientBg";
 import { LightLeak } from "../lib/lightLeak";
+import { easeOutExpo } from "../lib/easing";
 
 interface DataPoint {
   x: number;
@@ -50,8 +51,9 @@ export const DataViz: React.FC<CompositionProps> = ({
 
   const maxValue = Math.max(...dataPoints.map((d) => d.value), 1);
 
-  const titleOpacity = interpolate(titleProgress, [0, 1], [0, 1]);
-  const titleY = interpolate(titleProgress, [0, 1], [-20, 0]);
+  const titleT = Math.min(titleProgress, 1);
+  const titleOpacity = easeOutExpo(titleT);
+  const titleY = interpolate(easeOutExpo(titleT), [0, 1], [-20, 0]);
 
   // Dot grid background
   const gridDots = Array.from({ length: 15 * 9 }).map((_, i) => ({

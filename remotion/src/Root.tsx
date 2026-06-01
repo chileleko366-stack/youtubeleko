@@ -29,6 +29,20 @@ import { LaunchSequence } from "./compositions/LaunchSequence";
 import { SpaceSplitScreen } from "./compositions/SpaceSplitScreen";
 import { AstroFact } from "./compositions/AstroFact";
 
+export type VisualSpec = {
+  intent?: "stat" | "proportion" | "quote" | "concept" | "comparison" | "timeline" | "list" | "reveal" | "kinetic";
+  data?: {
+    value?: number;
+    unit?: string;
+    total?: number;
+    iconCount?: number;
+    highlightCount?: number;
+  };
+  kineticWords?: string[];
+  highlightWords?: string[];
+  sfxCueFrame?: number;
+};
+
 export type CompositionProps = {
   text: string;
   brandColor: string;
@@ -39,6 +53,12 @@ export type CompositionProps = {
   bullets?: string[];
   statValue?: string;
   quoteText?: string;
+  // Phase 1a: kinetic typography
+  highlightWords?: string[];
+  accentWarn?: string;
+  maxWordsPerGroup?: number;
+  // Phase 3: visual spec from Stage 5.5
+  visualSpec?: VisualSpec;
 };
 
 const defaultProps: CompositionProps = {

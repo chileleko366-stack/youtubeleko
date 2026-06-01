@@ -9,6 +9,7 @@ import {
 import type { CompositionProps } from "../Root";
 import { GradientBg } from "../lib/gradientBg";
 import { ParticleField } from "../lib/particles";
+import { easeOutExpo } from "../lib/easing";
 
 export const SplitScreen: React.FC<CompositionProps> = ({
   text,
@@ -29,10 +30,13 @@ export const SplitScreen: React.FC<CompositionProps> = ({
   // Panels slide in
   const leftSpring = spring({ frame, fps, config: { damping: 22, stiffness: 130, mass: 0.8 } });
   const rightSpring = spring({ frame: frame - 8, fps, config: { damping: 22, stiffness: 130, mass: 0.8 } });
-  const leftX = interpolate(leftSpring, [0, 1], [-960, 0]);
-  const rightX = interpolate(rightSpring, [0, 1], [960, 0]);
-  const leftBlur = interpolate(leftSpring, [0, 1], [12, 0]);
-  const rightBlur = interpolate(rightSpring, [0, 1], [12, 0]);
+  // easeOutExpo for snappy panel slide-in
+  const leftT = Math.min(leftSpring, 1);
+  const rightT = Math.min(rightSpring, 1);
+  const leftX = interpolate(easeOutExpo(leftT), [0, 1], [-960, 0]);
+  const rightX = interpolate(easeOutExpo(rightT), [0, 1], [960, 0]);
+  const leftBlur = interpolate(easeOutExpo(leftT), [0, 1], [12, 0]);
+  const rightBlur = interpolate(easeOutExpo(rightT), [0, 1], [12, 0]);
 
   // Divider line draws from center outward
   const dividerSpring = spring({ frame: frame - 4, fps, config: { damping: 10, stiffness: 200, mass: 0.4 } });
@@ -90,13 +94,14 @@ export const SplitScreen: React.FC<CompositionProps> = ({
                 fps,
                 config: { damping: 18, stiffness: 160 },
               });
+              const wT = Math.min(wSpring, 1);
               return (
                 <span
                   key={i}
                   style={{
                     display: "inline-block",
-                    opacity: interpolate(wSpring, [0, 1], [0, 1]),
-                    transform: `translateY(${interpolate(wSpring, [0, 1], [20, 0])}px)`,
+                    opacity: easeOutExpo(wT),
+                    transform: `translateY(${interpolate(easeOutExpo(wT), [0, 1], [20, 0])}px)`,
                   }}
                 >
                   {word}
@@ -198,13 +203,14 @@ export const SplitScreen: React.FC<CompositionProps> = ({
                 fps,
                 config: { damping: 18, stiffness: 160 },
               });
+              const wT = Math.min(wSpring, 1);
               return (
                 <span
                   key={i}
                   style={{
                     display: "inline-block",
-                    opacity: interpolate(wSpring, [0, 1], [0, 1]),
-                    transform: `translateY(${interpolate(wSpring, [0, 1], [20, 0])}px)`,
+                    opacity: easeOutExpo(wT),
+                    transform: `translateY(${interpolate(easeOutExpo(wT), [0, 1], [20, 0])}px)`,
                   }}
                 >
                   {word}
