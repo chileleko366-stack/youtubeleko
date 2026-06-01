@@ -51,6 +51,7 @@ jobs:
     continue-on-error: true
     permissions:
       contents: read
+      models: read
     outputs:
       title: ${{ steps.export_result.outputs.title }}
 
@@ -159,6 +160,7 @@ jobs:
     continue-on-error: true
     permissions:
       contents: read
+      models: read
     outputs:
       title: ${{ steps.export_result.outputs.title }}
 
@@ -269,6 +271,7 @@ jobs:
     continue-on-error: true
     permissions:
       contents: read
+      models: read
     outputs:
       title: ${{ steps.export_result.outputs.title }}
 

@@ -46,7 +46,7 @@ _OPENAI_COMPAT_PROVIDERS = [
         "name": "Cerebras",
         "env_key": "CEREBRAS_API_KEY",
         "base_url": "https://api.cerebras.ai/v1",
-        "models": ["llama-3.3-70b", "llama3.1-70b", "llama3.1-8b"],
+        "models": ["llama3.3-70b", "llama3.1-70b", "llama3.1-8b"],
     },
     {
         "name": "Groq",
@@ -327,6 +327,9 @@ class AIClient:
         # OpenAI-compatible providers (priority 1–7)
         for cfg in _OPENAI_COMPAT_PROVIDERS:
             key = os.environ.get(cfg["env_key"])
+            # GitHub Models: fall back to the auto-injected GITHUB_TOKEN when no PAT is set
+            if not key and cfg["name"] == "GitHub Models":
+                key = os.environ.get("GITHUB_TOKEN")
             if not key:
                 continue
             kwargs = {"api_key": key, "base_url": cfg["base_url"]}
